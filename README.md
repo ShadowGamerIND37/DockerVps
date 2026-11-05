@@ -22,7 +22,7 @@ database row intact. See [MIGRATION.md](MIGRATION.md) for the upgrade path.
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (129 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (134 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -202,7 +202,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**129 tests, all passing.** They cover the security policy, port allocation,
+**134 tests, all passing.** They cover the security policy, port allocation,
 schema migration, the provisioning transaction and rollback, the web terminal's
 credential handling, and backward compatibility across the UnixNodes → TGD Bot
 rebrand. They run against a fake Docker client (`tests/fake_docker.py`) and need
@@ -240,6 +240,28 @@ These are real, and the bot reports them rather than hiding them:
    silently re-labelled as Docker records.
 6. **The web terminal is a bridge, not a shell emulator.** It carries a PTY over
    WebSockets to the container's SSH port; it does not run a shell itself.
+
+---
+
+## Discord commands
+
+Every one of the **88 prefix commands** also has a slash-command equivalent.
+The bot syncs the application-command tree on startup; prefix commands and their
+aliases remain available. The existing `/manage`, `/myvps`, `/ping`,
+`/dashboard`, and `/help` interfaces are unchanged.
+
+Use `/create` with no options for the guided form. After submitting it, choose a
+node and then an OS from the populated dropdowns. Admins can still supply the
+creation options directly.
+
+Most slash options map one-to-one to their prefix arguments. Two commands accept
+a single optional string for the remaining arguments because Discord does not
+support variadic (`*args`) slash options:
+
+- `/vps action:create` — equivalent to `!vps create`.
+- `/ports subcommand:add args:"1 8080"` — equivalent to `!ports add 1 8080`.
+
+The `VPS info` user context menu is also registered.
 
 ---
 
