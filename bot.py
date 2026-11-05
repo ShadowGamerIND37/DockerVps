@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║              UNIXNODES  •  VPS CONTROL BOT  •  v10.0 ULTRA-ANIMATED          ║
+║              TGD BOT  •  VPS CONTROL BOT  •  v10.0 ULTRA-ANIMATED            ║
 ║                                                                              ║
 ║   A full-featured Discord bot for managing Docker based VPS infrastructure.     ║
 ║                                                                              ║
@@ -44,7 +44,7 @@
 ║       - Code-block escaping (backticks in output can no longer break embeds)  ║
 ║       - Graceful "already responded" guards on every interaction path        ║
 ║                                                                              ║
-║   Author  : Hopingboyz                                                       ║
+║   Author  : ShadowGamerIND                                                       ║
 ║   License : MIT                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
@@ -118,34 +118,34 @@ BASE_DIR = Path(__file__).resolve().parent
 # Load .env from the script folder first, then CWD (never crash if missing).
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
 load_dotenv(override=False)
-# ── UnixNodes v11 Docker platform ────────────────────────────────────────────
-#  All infrastructure lives in the `unixnodes` package: the Docker Engine
+# ── TGD Bot v11 Docker platform ────────────────────────────────────────────
+#  All infrastructure lives in the `tgdbot` package: the Docker Engine
 #  backend, the schema/migrations, the transactional provisioning pipeline and
 #  the Web SSH terminal service.  bot.py keeps the Discord surface.
 try:
-    from unixnodes import config as unix_config
-    from unixnodes import platform as unix_platform
-    from unixnodes.concurrency import (
-        shutdown_pool as unix_close_pool,
-        reload_limits as unix_reload_limits,
-        run_in_thread as unix_run_in_thread,
+    from tgdbot import config as tgd_config
+    from tgdbot import platform as tgd_platform
+    from tgdbot.concurrency import (
+        shutdown_pool as tgd_close_pool,
+        reload_limits as tgd_reload_limits,
+        run_in_thread as tgd_run_in_thread,
     )
-    from unixnodes.database import migrations as unix_migrations
-    from unixnodes.database import models as unix_models
-    from unixnodes.docker_backend import (
-        backups as unix_backups,
-        containers as unix_ctr,
-        images as unix_images,
-        monitoring as unix_monitoring,
-        networking as unix_networking,
-        nodes as unix_nodes_mod,
-        ports as unix_ports_mod,
-        resources as unix_resources,
-        security as unix_security,
-        ssh as unix_ssh,
-        volumes as unix_volumes,
+    from tgdbot.database import migrations as tgd_migrations
+    from tgdbot.database import models as tgd_models
+    from tgdbot.docker_backend import (
+        backups as tgd_backups,
+        containers as tgd_ctr,
+        images as tgd_images,
+        monitoring as tgd_monitoring,
+        networking as tgd_networking,
+        nodes as tgd_nodes_mod,
+        ports as tgd_ports_mod,
+        resources as tgd_resources,
+        security as tgd_security,
+        ssh as tgd_ssh,
+        volumes as tgd_volumes,
     )
-    from unixnodes.errors import (
+    from tgdbot.errors import (
         BackupError as UnixBackupError,
         ContainerError as UnixContainerError,
         ContainerNotFound as UnixContainerNotFound,
@@ -160,22 +160,22 @@ try:
         QuotaUnsupported as UnixQuotaError,
         SecurityPolicyError as UnixSecurityError,
         SSHSetupError as UnixSSHError,
-        UnixNodesError,
+        TgdBotError,
         VolumeError as UnixVolumeError,
     )
-    from unixnodes.services import (
-        backup_service as unix_backup_service,
-        expiration as unix_expiration,
-        lifecycle as unix_lifecycle,
-        node_service as unix_node_service,
-        provisioning as unix_provisioning,
+    from tgdbot.services import (
+        backup_service as tgd_backup_service,
+        expiration as tgd_expiration,
+        lifecycle as tgd_lifecycle,
+        node_service as tgd_node_service,
+        provisioning as tgd_provisioning,
     )
 
-    INFRA = unix_platform.platform          # async façade used by every command
-    UNIXNODES_AVAILABLE = True
+    INFRA = tgd_platform.platform          # async façade used by every command
+    TGDBOT_AVAILABLE = True
 except ImportError as _exc:  # pragma: no cover
     sys.exit(
-        "FATAL: the unixnodes Docker platform could not be imported: %s\n"
+        "FATAL: the tgdbot Docker platform could not be imported: %s\n"
         "Run:  pip install -r requirements.txt" % _exc
     )
 
@@ -226,17 +226,17 @@ def _env_id(key: str, default: int = 0) -> int:
         return default
 
 
-BOT_NAME: str = str(_env("BOT_NAME", "UnixNodes"))
+BOT_NAME: str = str(_env("BOT_NAME", "TGD Bot"))
 PREFIX: str = str(_env("PREFIX", "!"))
 DISCORD_TOKEN: Optional[str] = _env("DISCORD_TOKEN")
 YOUR_SERVER_IP: str = str(_env("YOUR_SERVER_IP", "127.0.0.1"))
 MAIN_ADMIN_ID: int = _env_id("MAIN_ADMIN_ID", 0)
 VPS_USER_ROLE_ID: Optional[int] = _env_id("VPS_USER_ROLE_ID", 0) or None
 DEFAULT_STORAGE_POOL: str = str(_env("DEFAULT_STORAGE_POOL", "default"))
-DOCKER_NETWORK_NAME: str = str(_env("DOCKER_DEFAULT_NETWORK", unix_config.DOCKER_DEFAULT_NETWORK))
+DOCKER_NETWORK_NAME: str = str(_env("DOCKER_DEFAULT_NETWORK", tgd_config.DOCKER_DEFAULT_NETWORK))
 HOST_MOTD: str = str(_env("HOST_MOTD", ""))
 BOT_VERSION: str = str(_env("BOT_VERSION", "11.0-DOCKER"))
-BOT_DEVELOPER: str = str(_env("BOT_DEVELOPER", "Hopingboyz"))
+BOT_DEVELOPER: str = str(_env("BOT_DEVELOPER", "ShadowGamerIND"))
 BOT_THUMBNAIL_URL: str = str(_env("BOT_THUMBNAIL_URL", ""))
 BOT_ICON_URL: str = str(_env("BOT_ICON_URL", ""))
 SUPPORT_INVITE_URL: str = str(_env("SUPPORT_INVITE_URL", ""))
@@ -282,12 +282,12 @@ WEBSSH_CONNECT_TIMEOUT: int = _env_int("WEBSSH_CONNECT_TIMEOUT", 15)
 # ── Available Operating Systems ──────────────────────────────────────────────
 # v11: legacy alias kept for any custom code that imported the name.  It now
 # mirrors the Docker image catalogue instead of the old LXC image list.
-SUPPORTED_OS_OPTIONS = unix_images.catalogue()
+SUPPORTED_OS_OPTIONS = tgd_images.catalogue()
 
 # Add to database schema
 def get_default_os() -> str:
     """Default image for VPS creation (DOCKER_DEFAULT_IMAGE)."""
-    return unix_config.DOCKER_DEFAULT_IMAGE
+    return tgd_config.DOCKER_DEFAULT_IMAGE
 
 # ── Rate limiting / abuse ────────────────────────────────────────────────────
 RATE_LIMIT_COOLDOWN: float = float(_env_int("RATE_LIMIT_COOLDOWN", 4))
@@ -994,7 +994,7 @@ def executemany(sql: str, seq: Iterable[Sequence[Any]]) -> int:
 
 # ── 4.1 Schema ───────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = unix_models.SCHEMA_VERSION
+SCHEMA_VERSION = tgd_models.SCHEMA_VERSION
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -1167,17 +1167,17 @@ _MIGRATIONS: List[Tuple[str, str]] = [
 
 def init_db() -> None:
     """Create schema, migrate old databases, verify integrity."""
-    # Run the unixnodes migration engine first: it backs up the file, adds the
+    # Run the tgdbot migration engine first: it backs up the file, adds the
     # Docker columns and tables (docker_ports, docker_backups, docker_images,
     # resource_plans, storage_quotas, migration_reports), seeds the image
     # catalogue and tags any legacy LXC rows.  It is idempotent and refuses to
     # convert a legacy row into a Docker one.
-    report = unix_migrations.migrate(
+    report = tgd_migrations.migrate(
         DB_FILE, backup_dir=DB_BACKUP_DIR,
         report_dir=(BASE_DIR / "migration_reports"))
     if report.error:
         logger.critical("Database migration FAILED: %s", report.error)
-        logger.critical("Roll back with: %s", unix_migrations.rollback_note(report))
+        logger.critical("Roll back with: %s", tgd_migrations.rollback_note(report))
     elif (report.from_version != report.to_version
           or report.tables_created or report.columns_added or report.legacy_rows_tagged):
         logger.warning(
@@ -1618,7 +1618,7 @@ def patch_vps(container_name: str, **fields: Any) -> bool:
         "user_id", "node_id", "ram", "cpu", "storage", "config", "os_version",
         "status", "suspended", "whitelisted", "is_public", "expiration_date",
         "root_password", "shared_with", "suspension_history", "created_at",
-        # ── v11 Docker metadata (see unixnodes/database/models.py) ──────────
+        # ── v11 Docker metadata (see tgdbot/database/models.py) ──────────
         "backend", "docker_container_id", "docker_image", "volume_name",
         "ssh_host_port", "pid_limit", "quota_method", "quota_enforced",
         "quota_project_id", "provision_state", "restart_count", "last_health_ts",
@@ -1707,7 +1707,7 @@ async def get_containers_on_node(node_id: int = 1) -> List[str]:
     """
     try:
         client = docker_client(node_id)
-        items = await run_blocking(unix_ctr.list_managed, client)
+        items = await run_blocking(tgd_ctr.list_managed, client)
         return [str(item["name"]) for item in items]
     except asyncio.TimeoutError:
         logger.warning("container list timed out on node %s", node_id)
@@ -2044,11 +2044,11 @@ def db_write_transaction():
 # ═══════════════════════════════════════════════════════════════════════════
 #
 #  v11: the whole LXC/LXD backend is gone.  Every infrastructure call goes
-#  through the `unixnodes` package, which talks to the Docker Engine API.
+#  through the `tgdbot` package, which talks to the Docker Engine API.
 #
 #  Rules kept from v10 (and extended):
 #   • Nothing blocking runs on the event loop — every Docker call is dispatched
-#     onto the bounded worker pool in `unixnodes.concurrency`.
+#     onto the bounded worker pool in `tgdbot.concurrency`.
 #   • Container state is always read live from the engine, never cached.
 #   • The persistent volume is never deleted unless an operation explicitly
 #     means "destroy the data" (delete / reinstall).
@@ -2090,7 +2090,7 @@ def safe_iso_parse(value: Optional[str]) -> Optional[datetime]:
 
 async def run_blocking(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Run a blocking callable on the bounded worker pool (loop stays free)."""
-    return await unix_run_in_thread(func, *args, **kwargs)
+    return await tgd_run_in_thread(func, *args, **kwargs)
 
 
 # ── 5.1 Docker node access ───────────────────────────────────────────────────
@@ -2107,7 +2107,7 @@ def docker_node(node_id: Optional[int] = None) -> Dict[str, Any]:
 
 
 def docker_client(node_id: Optional[int] = None) -> Any:
-    return unix_nodes_mod.client_for(docker_node(node_id))
+    return tgd_nodes_mod.client_for(docker_node(node_id))
 
 
 def node_is_local(node_id: Optional[int] = None) -> bool:
@@ -2116,9 +2116,9 @@ def node_is_local(node_id: Optional[int] = None) -> bool:
 
 def container_allocator(node_id: Optional[int] = None) -> Any:
     node = docker_node(node_id)
-    return unix_ports_mod.PortAllocator(
+    return tgd_ports_mod.PortAllocator(
         INFRA.repo, int(node["id"]),
-        str(node.get("publish_ip") or unix_config.DOCKER_PUBLISH_IP))
+        str(node.get("publish_ip") or tgd_config.DOCKER_PUBLISH_IP))
 
 
 def is_docker_vps(container_name: str) -> bool:
@@ -2146,7 +2146,7 @@ async def container_state(container_name: str, node_id: Optional[int] = None) ->
     """
     try:
         client = docker_client(node_id)
-        return await run_blocking(unix_ctr.simple_state, client, container_name)
+        return await run_blocking(tgd_ctr.simple_state, client, container_name)
     except Exception as exc:
         logger.debug("container_state(%s) failed: %s", container_name, exc)
         return "unknown"
@@ -2155,7 +2155,7 @@ async def container_state(container_name: str, node_id: Optional[int] = None) ->
 async def container_exists(container_name: str, node_id: Optional[int] = None) -> bool:
     try:
         client = docker_client(node_id)
-        return await run_blocking(unix_ctr.exists, client, container_name)
+        return await run_blocking(tgd_ctr.exists, client, container_name)
     except Exception:
         return False
 
@@ -2163,43 +2163,43 @@ async def container_exists(container_name: str, node_id: Optional[int] = None) -
 async def docker_start(container_name: str, node_id: Optional[int] = None,
                        *, timeout: Optional[int] = None) -> None:
     client = docker_client(node_id)
-    await run_blocking(unix_ctr.start, client, container_name, timeout=timeout)
+    await run_blocking(tgd_ctr.start, client, container_name, timeout=timeout)
 
 
 async def docker_stop(container_name: str, node_id: Optional[int] = None,
                       *, timeout: Optional[int] = None, force: bool = False) -> None:
     client = docker_client(node_id)
-    await run_blocking(unix_ctr.stop, client, container_name, timeout=timeout, force=force)
+    await run_blocking(tgd_ctr.stop, client, container_name, timeout=timeout, force=force)
 
 
 async def docker_restart(container_name: str, node_id: Optional[int] = None) -> None:
     client = docker_client(node_id)
-    await run_blocking(unix_ctr.restart, client, container_name)
+    await run_blocking(tgd_ctr.restart, client, container_name)
 
 
 async def docker_remove(container_name: str, node_id: Optional[int] = None, *,
                         volumes: bool = False, force: bool = True) -> bool:
     client = docker_client(node_id)
-    return await run_blocking(unix_ctr.remove, client, container_name,
+    return await run_blocking(tgd_ctr.remove, client, container_name,
                               volumes=volumes, force=force)
 
 
 async def docker_logs(container_name: str, node_id: Optional[int] = None,
                       tail: int = 60) -> str:
     client = docker_client(node_id)
-    return await run_blocking(unix_ctr.logs, client, container_name, tail)
+    return await run_blocking(tgd_ctr.logs, client, container_name, tail)
 
 
 async def docker_inspect(container_name: str, node_id: Optional[int] = None) -> Dict[str, Any]:
     client = docker_client(node_id)
-    return await run_blocking(unix_ctr.summary, client, container_name)
+    return await run_blocking(tgd_ctr.summary, client, container_name)
 
 
 async def get_containers_on_node(node_id: Optional[int] = None) -> List[str]:
     """Managed container names on a node (the `!lxc-list` data source)."""
     try:
         client = docker_client(node_id)
-        items = await run_blocking(unix_ctr.list_managed, client)
+        items = await run_blocking(tgd_ctr.list_managed, client)
         return [str(item["name"]) for item in items]
     except Exception as exc:
         logger.warning("could not list containers on node %s: %s", node_id, exc)
@@ -2209,7 +2209,7 @@ async def get_containers_on_node(node_id: Optional[int] = None) -> List[str]:
 async def get_orphaned_containers(node_id: Optional[int] = None) -> List[str]:
     """Containers present on the engine but missing from the database."""
     try:
-        found = await run_blocking(unix_lifecycle.orphans, INFRA.repo, node_id)
+        found = await run_blocking(tgd_lifecycle.orphans, INFRA.repo, node_id)
     except Exception as exc:
         logger.debug("orphan scan failed: %s", exc)
         return []
@@ -2231,7 +2231,7 @@ async def container_shell(container_name: str, script: str, *,
     removes every quoting bug and works on bash and busybox `sh`.
     """
     client = docker_client(node_id)
-    return await run_blocking(unix_ctr.exec_script, client, container_name, script,
+    return await run_blocking(tgd_ctr.exec_script, client, container_name, script,
                               user=user, timeout=timeout)
 
 
@@ -2239,7 +2239,7 @@ async def container_exec(container_name: str, command: str, *, timeout: int = 12
                          node_id: Optional[int] = None) -> Tuple[int, str, str]:
     """Run one command line inside the container; returns (code, stdout, stderr)."""
     client = docker_client(node_id)
-    return await run_blocking(unix_ctr.exec_argv, client, container_name,
+    return await run_blocking(tgd_ctr.exec_argv, client, container_name,
                               ["sh", "-c", command], timeout=timeout)
 
 
@@ -2264,7 +2264,7 @@ async def apply_container_policy(container_name: str, node_id: int) -> bool:
     vps = INFRA.repo.get_vps_by_container(container_name)
     if not vps:
         raise RuntimeError(f"No VPS record for {container_name}")
-    result = await run_blocking(unix_lifecycle.recreate, INFRA.repo, vps)
+    result = await run_blocking(tgd_lifecycle.recreate, INFRA.repo, vps)
     return bool(result.get("running"))
 
 
@@ -2278,7 +2278,7 @@ async def apply_internal_permissions(container_name: str, node_id: int) -> None:
     verifies sshd, cron and the state directory.
     """
     script = """
-mkdir -p /etc/unixnodes /run/sshd /var/run/sshd 2>/dev/null || true
+mkdir -p /etc/tgdbot /run/sshd /var/run/sshd 2>/dev/null || true
 if command -v cron >/dev/null 2>&1 && ! pgrep -x cron >/dev/null 2>&1; then cron 2>/dev/null || true; fi
 if command -v crond >/dev/null 2>&1 && ! pgrep -x crond >/dev/null 2>&1; then crond -b 2>/dev/null || true; fi
 echo GUEST_OK
@@ -2298,30 +2298,30 @@ async def configure_ssh(container_name: str, node_id: int,
     silently handing out credentials for a VPS that cannot be reached.
     """
     client = docker_client(node_id)
-    state = await run_blocking(unix_ctr.simple_state, client, container_name)
+    state = await run_blocking(tgd_ctr.simple_state, client, container_name)
     if state == "missing":
         return False, "Container does not exist on its node"
     if state != "running":
         try:
-            await run_blocking(unix_ctr.start, client, container_name)
+            await run_blocking(tgd_ctr.start, client, container_name)
         except Exception as exc:
             return False, f"Container is not running and could not be started: {exc}"
         for _ in range(20):
             await asyncio.sleep(1)
-            if await run_blocking(unix_ctr.simple_state, client, container_name) == "running":
+            if await run_blocking(tgd_ctr.simple_state, client, container_name) == "running":
                 break
         else:
             return False, "Container did not reach the running state"
 
     if password:
-        ok, note = await run_blocking(unix_ssh.set_root_password, client, container_name, password)
+        ok, note = await run_blocking(tgd_ssh.set_root_password, client, container_name, password)
         if not ok:
             return False, note
-    ok, note = await run_blocking(unix_ssh.ensure_ssh_running, client, container_name)
+    ok, note = await run_blocking(tgd_ssh.ensure_ssh_running, client, container_name)
     if not ok:
-        logs = await run_blocking(unix_ctr.logs, client, container_name, 30)
+        logs = await run_blocking(tgd_ctr.logs, client, container_name, 30)
         return False, f"{note}\n\n{logs[-500:]}"
-    if not await run_blocking(unix_ssh.wait_ready, client, container_name):
+    if not await run_blocking(tgd_ssh.wait_ready, client, container_name):
         return False, "sshd is installed but is not listening on port 22"
     logger.info("SSH ready for %s on node %s", container_name, node_id)
     return True, "SSH verified inside the container"
@@ -2331,8 +2331,8 @@ async def verify_ssh_access(container_name: str, host_port: int, password: str,
                             node_id: Optional[int] = None) -> Tuple[bool, str]:
     """Verify the published SSH port really answers, from the node's point of view."""
     node = docker_node(node_id)
-    host = unix_provisioning.verification_host(node, unix_config.DOCKER_PUBLISH_IP)
-    return await run_blocking(unix_ssh.verify_access, host, int(host_port), password)
+    host = tgd_provisioning.verification_host(node, tgd_config.DOCKER_PUBLISH_IP)
+    return await run_blocking(tgd_ssh.verify_access, host, int(host_port), password)
 
 
 # ── 5.5 Password vault (portable encryption, no hard dependency) ─────────────
@@ -2421,7 +2421,7 @@ def decrypt_secret(blob: Optional[str]) -> Optional[str]:
 
 def generate_strong_password(length: int = 20) -> str:
     """Cryptographically random password covering every character class."""
-    return unix_provisioning.generate_password(length)
+    return tgd_provisioning.generate_password(length)
 
 
 def get_vps_password(container_name: str) -> Optional[str]:
@@ -2446,7 +2446,7 @@ INFRA.set_vault(encrypt_secret)
 async def get_host_stats(node_id: int) -> Dict[str, Any]:
     """CPU / RAM / disk of the machine hosting the bot (never container numbers)."""
     try:
-        snapshot = await run_blocking(unix_monitoring.host_snapshot, None)
+        snapshot = await run_blocking(tgd_monitoring.host_snapshot, None)
         return {**snapshot, "online": True}
     except Exception as exc:
         logger.debug("host stats failed: %s", exc)
@@ -2454,23 +2454,23 @@ async def get_host_stats(node_id: int) -> Dict[str, Any]:
 
 
 def get_host_cpu_usage() -> float:
-    return unix_monitoring.host_cpu_percent()
+    return tgd_monitoring.host_cpu_percent()
 
 
 def get_host_ram_usage() -> float:
-    return unix_monitoring.host_ram_percent()
+    return tgd_monitoring.host_ram_percent()
 
 
 def get_host_disk_usage() -> str:
-    return str(unix_monitoring.host_disk("/").get("text") or "Unknown")
+    return str(tgd_monitoring.host_disk("/").get("text") or "Unknown")
 
 
 def get_host_disk_percent() -> float:
-    return float(unix_monitoring.host_disk("/").get("percent") or 0.0)
+    return float(tgd_monitoring.host_disk("/").get("percent") or 0.0)
 
 
 def get_host_uptime_seconds() -> float:
-    return unix_monitoring.host_uptime_seconds()
+    return tgd_monitoring.host_uptime_seconds()
 
 
 def get_load_average() -> Optional[Tuple[float, float, float]]:
@@ -2486,7 +2486,7 @@ async def get_node_status(node_id: int) -> Tuple[str, bool]:
     if not node:
         return "❔ Unknown", False
     try:
-        report = await run_blocking(unix_nodes_mod.health, node)
+        report = await run_blocking(tgd_nodes_mod.health, node)
     except Exception as exc:
         return f"🔴 Unreachable ({str(exc)[:40]})", False
     return str(report.get("label") or "❔ Unknown"), bool(report.get("online"))
@@ -2497,7 +2497,7 @@ async def get_node_docker_status(node_id: int) -> Dict[str, Any]:
     node = await run_blocking(INFRA.repo.get_node, int(node_id))
     if not node:
         return {"online": False, "error": "node not found"}
-    return await run_blocking(unix_nodes_mod.status, node)
+    return await run_blocking(tgd_nodes_mod.status, node)
 
 
 # ── 5.7 Container statistics (Docker stats API — cgroup counters) ───────────
@@ -2521,7 +2521,7 @@ async def get_container_stats(container_name: str, node_id: Optional[int] = None
         return {**empty, "status": "legacy", "disk": "Legacy LXC record"}
     try:
         client = docker_client(node_id)
-        stats = await run_blocking(unix_monitoring.container_stats, client, container_name)
+        stats = await run_blocking(tgd_monitoring.container_stats, client, container_name)
     except Exception as exc:
         logger.debug("container stats failed for %s: %s", container_name, exc)
         return empty
@@ -2548,8 +2548,8 @@ async def get_container_networks(container_name: str,
     """Map Docker network name → container IPv4 address."""
     try:
         client = docker_client(node_id)
-        container = await run_blocking(unix_ctr.get_container, client, container_name)
-        return await run_blocking(unix_networking.container_addresses, container)
+        container = await run_blocking(tgd_ctr.get_container, client, container_name)
+        return await run_blocking(tgd_networking.container_addresses, container)
     except Exception as exc:
         logger.debug("network lookup failed for %s: %s", container_name, exc)
         return {}
@@ -2557,7 +2557,7 @@ async def get_container_networks(container_name: str,
 
 async def get_container_ip(container_name: str, node_id: Optional[int] = None) -> Optional[str]:
     networks = await get_container_networks(container_name, node_id)
-    preferred = unix_config.DOCKER_DEFAULT_NETWORK
+    preferred = tgd_config.DOCKER_DEFAULT_NETWORK
     if preferred in networks:
         return networks[preferred]
     for key in ("bridge", "default"):
@@ -2591,9 +2591,9 @@ async def create_port_forward(user_id: Union[int, str], container: str, vps_port
         logger.error("create_port_forward: no VPS record for %s", container)
         return None
     try:
-        outcome = await run_blocking(unix_lifecycle.add_port, INFRA.repo, vps,
+        outcome = await run_blocking(tgd_lifecycle.add_port, INFRA.repo, vps,
                                      int(vps_port), str(protocol))
-    except UnixNodesError as exc:
+    except TgdBotError as exc:
         logger.error("port allocation failed for %s: %s", container, exc)
         return None
     host_port = outcome.get("host_port")
@@ -2617,8 +2617,8 @@ async def remove_port_forward(forward_id: int) -> Tuple[bool, Optional[str], Opt
         INFRA.repo.release_port(int(forward_id))
         return True, str(row.get("user_id") or ""), host_port
     try:
-        await run_blocking(unix_lifecycle.remove_port, INFRA.repo, vps, int(forward_id))
-    except UnixNodesError as exc:
+        await run_blocking(tgd_lifecycle.remove_port, INFRA.repo, vps, int(forward_id))
+    except TgdBotError as exc:
         logger.error("could not remove forward %s: %s", forward_id, exc)
         return False, None, None
     return True, str(row.get("user_id") or ""), host_port
@@ -2635,8 +2635,8 @@ async def recreate_port_forwards(container: str) -> int:
     if not vps:
         return 0
     try:
-        problems = await run_blocking(unix_lifecycle.republish, INFRA.repo, vps)
-    except UnixNodesError as exc:
+        problems = await run_blocking(tgd_lifecycle.republish, INFRA.repo, vps)
+    except TgdBotError as exc:
         logger.warning("could not republish ports for %s: %s", container, exc)
         return 0
     if problems:
@@ -2664,13 +2664,13 @@ async def provision_container(container_name: str, os_version: str, node_id: int
     Create a fresh container with limits applied.
 
     Kept for the flows that only need "make me a container" (the full
-    credential/DB pipeline lives in `unixnodes.services.provisioning`).
+    credential/DB pipeline lives in `tgdbot.services.provisioning`).
     """
-    request = unix_provisioning.ProvisionRequest(
+    request = tgd_provisioning.ProvisionRequest(
         owner_id=0, container_name=container_name, image=os_version,
         ram_mb=int(ram_gb) * 1024, cpu=float(cpu), storage_gb=int(disk_gb),
         node_id=int(node_id))
-    await run_blocking(unix_provisioning.provision, INFRA.repo, request)
+    await run_blocking(tgd_provisioning.provision, INFRA.repo, request)
 
 
 async def run_host_motd(container_name: str, node_id: int) -> None:
@@ -2693,10 +2693,10 @@ async def docker_storage_report(container_name: str, node_id: Optional[int] = No
     """Real quota state for one VPS (honest about what is *not* enforced)."""
     quota = INFRA.repo.get_quota(container_name) or {}
     client = docker_client(node_id)
-    mountpoint = await run_blocking(unix_volumes.mountpoint, client, container_name) or ""
-    support = await run_blocking(unix_resources.detect_quota_support, mountpoint,
+    mountpoint = await run_blocking(tgd_volumes.mountpoint, client, container_name) or ""
+    support = await run_blocking(tgd_resources.detect_quota_support, mountpoint,
                                  node_is_local=node_is_local(node_id))
-    used = await run_blocking(unix_monitoring.disk_usage_bytes, client, container_name)
+    used = await run_blocking(tgd_monitoring.disk_usage_bytes, client, container_name)
     return {
         "method": str(quota.get("method") or support.method),
         "enforced": bool(quota.get("enforced")) and support.supported,
@@ -3631,7 +3631,7 @@ class PanelPump:
 
     # ── called from a worker thread ─────────────────────────────────────────
     def emit(self, index: int, state: str, detail: str = "") -> None:
-        """Thread-safe progress callback handed to the unixnodes services."""
+        """Thread-safe progress callback handed to the tgdbot services."""
         try:
             self.loop.call_soon_threadsafe(
                 self.queue.put_nowait, (int(index), str(state), str(detail or "")))
@@ -4587,11 +4587,11 @@ class LiveContainerGrid(LivePanelView):
         return embed
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 7. WEB SSH TERMINAL  (thin bridge → unixnodes.web.terminal)
+# 7. WEB SSH TERMINAL  (thin bridge → tgdbot.web.terminal)
 # ═══════════════════════════════════════════════════════════════════════════
 #
 #  v11: the Flask app, the token vault, the session table and the Paramiko
-#  reader/writer threads all live in `unixnodes/web/terminal.py`.  This section
+#  reader/writer threads all live in `tgdbot/web/terminal.py`.  This section
 #  only wires the platform's own primitives into that service so there is a
 #  single source of truth for credentials, permissions and audit events.
 #
@@ -4609,9 +4609,9 @@ class LiveContainerGrid(LivePanelView):
 #     always resolved through the database and the token.
 
 if WEBSSH_ENABLED:
-    from unixnodes.web import terminal as unix_terminal
+    from tgdbot.web import terminal as tgd_terminal
 
-    WEBSSH_HTML_PATH = unix_terminal.WEBSSH_HTML_PATH
+    WEBSSH_HTML_PATH = tgd_terminal.WEBSSH_HTML_PATH
 
     def _webssh_audit(action: str, actor: Any = None, **kwargs: Any) -> None:
         """Bridge the terminal's audit calls onto the bot's audit log."""
@@ -4631,7 +4631,7 @@ if WEBSSH_ENABLED:
                     return host
         return WEBSSH_SERVER_IP
 
-    WEBSSH_SETTINGS = unix_terminal.TerminalSettings(
+    WEBSSH_SETTINGS = tgd_terminal.TerminalSettings(
         host=WEBSSH_HOST,
         port=WEBSSH_PORT,
         server_ip=WEBSSH_SERVER_IP,
@@ -4647,7 +4647,7 @@ if WEBSSH_ENABLED:
         bot_version=BOT_VERSION,
     )
 
-    WEBSSH_BACKEND = unix_terminal.TerminalBackend(
+    WEBSSH_BACKEND = tgd_terminal.TerminalBackend(
         repo=INFRA.repo,
         encrypt=encrypt_secret,
         decrypt=decrypt_secret,
@@ -4693,7 +4693,7 @@ if WEBSSH_ENABLED:
     def create_webssh_app() -> "Flask":
         """Build the Flask app (used by the bot's startup hook)."""
         WEBSSH_BACKEND.start_cleanup_loop()
-        return unix_terminal.create_app(WEBSSH_BACKEND)
+        return tgd_terminal.create_app(WEBSSH_BACKEND)
 
     def await_webssh_thread(func: Callable[[], Any], timeout: int = 30) -> Any:
         """Run a blocking terminal helper on a worker thread with a hard timeout."""
@@ -4738,7 +4738,7 @@ intents.guilds = True
 intents.dm_messages = True
 
 
-class UnixNodesBot(commands.Bot):
+class TgdBot(commands.Bot):
     """Custom client: keeps the event loop healthy and supervises background jobs."""
 
     def __init__(self) -> None:
@@ -4982,7 +4982,7 @@ class UnixNodesBot(commands.Bot):
             return False
 
 
-bot = UnixNodesBot()
+bot = TgdBot()
 
 # Convenience alias used by the permission decorators.
 def is_admin() -> Callable:
@@ -6811,7 +6811,7 @@ class AdvancedView(PanelView):
                 embed=success_embed("Permissions Re-applied",
                                     f"Security policy re-applied: dropped capabilities, PID limit "
                                     f"`{self.vps.get('pid_limit') or 'default'}`, no-new-privileges "
-                                    f"`{'on' if unix_config.DOCKER_NO_NEW_PRIVILEGES else 'off'}` "
+                                    f"`{'on' if tgd_config.DOCKER_NO_NEW_PRIVILEGES else 'off'}` "
                                     "and the namespaced sysctls.\n"
                                     f"🔌 {restored} port forward(s) restored.\n"
                                     "_The persistent volume was kept — no data was touched._"),
@@ -7119,14 +7119,14 @@ async def manage_vps(ctx: commands.Context, user: Optional[discord.Member] = Non
 # v11: the selectable OS list is the Docker image catalogue — the built-in
 # Ubuntu / Debian / Alpine images plus every administrator-approved custom
 # image stored in the `docker_images` table.
-OS_OPTIONS: List[Dict[str, str]] = unix_images.catalogue()
+OS_OPTIONS: List[Dict[str, str]] = tgd_images.catalogue()
 
 
 def refresh_os_options() -> List[Dict[str, str]]:
     """Re-read the catalogue (call after an admin adds or removes an image)."""
     global OS_OPTIONS
     try:
-        OS_OPTIONS = unix_images.catalogue(INFRA.repo.list_approved_images())
+        OS_OPTIONS = tgd_images.catalogue(INFRA.repo.list_approved_images())
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("could not refresh the image catalogue: %s", exc)
     return OS_OPTIONS
@@ -7237,9 +7237,9 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
         return None
 
     # The panel mirrors the real transactional pipeline in
-    # unixnodes/services/provisioning.py — every step is reported as it happens
+    # tgdbot/services/provisioning.py — every step is reported as it happens
     # and a failure rolls the whole thing back.
-    steps = list(unix_provisioning.STEPS) + ["Deliver credentials"]
+    steps = list(tgd_provisioning.STEPS) + ["Deliver credentials"]
     # Pass the interaction to ProgressPanel for proper deferred interaction handling
     interaction_obj = responder.target if isinstance(responder.target, discord.Interaction) else None
     logger.debug(f"provision_vps: creating ProgressPanel with interaction={interaction_obj is not None}")
@@ -7257,10 +7257,10 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
         return None
 
     password = generate_strong_password()
-    request = unix_provisioning.ProvisionRequest(
+    request = tgd_provisioning.ProvisionRequest(
         owner_id=owner.id, container_name=container, image=os_version,
         ram_mb=int(ram_gb) * 1024, cpu=float(cpu), storage_gb=int(disk_gb),
-        node_id=int(node_id), pids=int(unix_config.DOCKER_DEFAULT_PID_LIMIT),
+        node_id=int(node_id), pids=int(tgd_config.DOCKER_DEFAULT_PID_LIMIT),
         expiry_days=expiry_days, is_public=bool(is_public),
         password=password, host_motd=HOST_MOTD)
 
@@ -8793,9 +8793,9 @@ async def apply_permissions(ctx: commands.Context, container_name: str) -> None:
         "Permissions Applied",
         f"`{container_name}` was recreated with the platform security profile:\n"
         f"• privileged mode **off**\n"
-        f"• {len(unix_security.cap_drop_list())} capabilities dropped\n"
-        f"• PID limit `{vps.get('pid_limit') or unix_config.DOCKER_DEFAULT_PID_LIMIT}`\n"
-        f"• no-new-privileges `{'on' if unix_config.DOCKER_NO_NEW_PRIVILEGES else 'off'}`\n"
+        f"• {len(tgd_security.cap_drop_list())} capabilities dropped\n"
+        f"• PID limit `{vps.get('pid_limit') or tgd_config.DOCKER_DEFAULT_PID_LIMIT}`\n"
+        f"• no-new-privileges `{'on' if tgd_config.DOCKER_NO_NEW_PRIVILEGES else 'off'}`\n"
         f"• persistent volume preserved"))
 
 
@@ -8912,7 +8912,7 @@ async def lxc_list(ctx: commands.Context, node_id: int = None) -> None:
     message = await thinking(ctx.channel, "Listing containers", f"Reading state on `{node['name']}`")
     try:
         client = docker_client(node["id"])
-        items = await run_blocking(unix_ctr.list_managed, client)
+        items = await run_blocking(tgd_ctr.list_managed, client)
     except Exception as exc:
         await _safe_edit(message, embed=error_embed("List Failed", truncate_text(exc, 700)))
         return
@@ -8999,7 +8999,7 @@ async def vps_network(ctx: commands.Context, container_name: str) -> None:
         add_field(embed, "🔌 Published", "No port forwards yet.", False)
     if vps:
         add_field(embed, "🖥️ Node",
-                  f"`{vps['node_id']}` • network `{unix_config.DOCKER_DEFAULT_NETWORK}`", True)
+                  f"`{vps['node_id']}` • network `{tgd_config.DOCKER_DEFAULT_NETWORK}`", True)
     await _safe_edit(message, embed=embed)
 
 
@@ -10077,7 +10077,7 @@ async def images_cmd(ctx: commands.Context) -> None:
 @bot.command(name="image-add")
 @is_admin()
 @with_typing
-@command_timeout(unix_config.DOCKER_IMAGE_PULL_TIMEOUT)
+@command_timeout(tgd_config.DOCKER_IMAGE_PULL_TIMEOUT)
 async def image_add(ctx: commands.Context, reference: str, *, label: str = "") -> None:
     """Approve a custom image for provisioning (and pull it to the local node)."""
     try:
@@ -11559,12 +11559,12 @@ def startup_checks() -> List[str]:
     try:
         import docker as _docker_probe
 
-        _client = _docker_probe.DockerClient(base_url=unix_config.DOCKER_HOST_URL,
-                                            timeout=min(5, unix_config.DOCKER_API_TIMEOUT))
+        _client = _docker_probe.DockerClient(base_url=tgd_config.DOCKER_HOST_URL,
+                                            timeout=min(5, tgd_config.DOCKER_API_TIMEOUT))
         _client.ping()
         _client.close()
     except Exception as exc:
-        problems.append(f"Cannot reach the Docker Engine at {unix_config.DOCKER_HOST_URL}: {exc}")
+        problems.append(f"Cannot reach the Docker Engine at {tgd_config.DOCKER_HOST_URL}: {exc}")
     if not DB_FILE.exists():
         problems.append("Database file could not be created.")
     if WEBSSH_ENABLED and not YOUR_SERVER_IP:
@@ -11585,7 +11585,7 @@ def print_banner() -> None:
 │  Main admin    : {MAIN_ADMIN_ID or 'NOT SET'}
 │  Server IP     : {YOUR_SERVER_IP}
 │  Password hash : {'Argon2id' if ARGON2_AVAILABLE else 'PBKDF2-SHA256 (pip install argon2-cffi)'}
-│  Docker volume : {unix_config.DOCKER_VOLUME_PREFIX}<container>  (persistent)
+│  Docker volume : {tgd_config.DOCKER_VOLUME_PREFIX}<container>  (persistent)
 │  Web terminal  : {'enabled on port ' + str(WEBSSH_PORT) if WEBSSH_ENABLED else 'disabled'}
 │  Animations    : {'on' if anim_on() else 'off'} • speed {ANIM_STATE.get('speed')}x
 │  Live panels   : refresh {LIVE_REFRESH_SECONDS}s • max {LIVE_MAX_MINUTES} min

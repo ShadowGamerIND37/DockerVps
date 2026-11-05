@@ -3,7 +3,7 @@ Transactional provisioning and rollback.
 
 The central promise of v11: a failed deployment must not leave an orphaned
 container, volume, port reservation or database row behind.  Every test here
-drives the real pipeline in ``unixnodes.services.provisioning`` against the
+drives the real pipeline in ``tgdbot.services.provisioning`` against the
 in-memory Docker engine, and injects failures at specific steps.
 """
 
@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import pytest
 
-from unixnodes import config
-from unixnodes.database import models
-from unixnodes.errors import ProvisioningError
-from unixnodes.services import provisioning
+from tgdbot import config
+from tgdbot.database import models
+from tgdbot.errors import ProvisioningError
+from tgdbot.services import provisioning
 
 
 @pytest.fixture()
@@ -215,7 +215,7 @@ def test_platform_stores_the_encrypted_password(db_path, fake_node, no_ssh_probe
     password itself.  Without this the user is DM'd a password that nothing in
     the system remembers — `!vps password` and the web terminal would both fail.
     """
-    from unixnodes.platform import Platform
+    from tgdbot.platform import Platform
 
     platform = Platform(db_path)
     platform.set_vault(lambda plaintext: "f1:" + plaintext[::-1])
@@ -237,7 +237,7 @@ def test_platform_without_a_vault_warns_and_stores_nothing(db_path, fake_node, n
     import asyncio
     import logging
 
-    from unixnodes.platform import Platform
+    from tgdbot.platform import Platform
 
     platform = Platform(db_path)          # no set_vault()
     outcome = asyncio.get_event_loop().run_until_complete(

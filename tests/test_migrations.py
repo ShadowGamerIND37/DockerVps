@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from unixnodes.database import migrations
-from unixnodes.database import models
-from unixnodes.database.repository import Repository
+from tgdbot.database import migrations
+from tgdbot.database import models
+from tgdbot.database.repository import Repository
 
 #: The v10 schema, recreated verbatim so the tests start from real data.
 V10_SCHEMA = """
@@ -268,7 +268,7 @@ def test_base_schema_matches_bot_schema():
     import re
     from pathlib import Path
 
-    from unixnodes.database import models
+    from tgdbot.database import models
 
     bot_source = Path(__file__).resolve().parent.parent / "bot.py"
     text = bot_source.read_text(encoding="utf-8").replace("\r\n", "\n")

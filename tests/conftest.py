@@ -11,10 +11,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from unixnodes import config                                        # noqa: E402
-from unixnodes.database import migrations                           # noqa: E402
-from unixnodes.database.repository import Repository                # noqa: E402
-from unixnodes.docker_backend import nodes as nodes_mod             # noqa: E402
+from tgdbot import config                                        # noqa: E402
+from tgdbot.database import migrations                           # noqa: E402
+from tgdbot.database.repository import Repository                # noqa: E402
+from tgdbot.docker_backend import nodes as nodes_mod             # noqa: E402
 from tests.fake_docker import make_client                           # noqa: E402
 
 
@@ -88,7 +88,7 @@ def fake_node(repo, docker_client, monkeypatch):
 @pytest.fixture()
 def no_ssh_probe(monkeypatch):
     """Skip real network probes of published ports (nothing is listening here)."""
-    from unixnodes.docker_backend import ssh as ssh_mod
+    from tgdbot.docker_backend import ssh as ssh_mod
 
     monkeypatch.setattr(ssh_mod, "tcp_reachable", lambda *a, **k: True)
     monkeypatch.setattr(ssh_mod, "ssh_banner", lambda *a, **k: "SSH-2.0-OpenSSH_9.6")
