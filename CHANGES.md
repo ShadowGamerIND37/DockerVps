@@ -144,17 +144,33 @@ Writing tests surfaced real defects, not just test errors:
    `CREATE INDEX idx_device_ip` fail on first start. It is now a verbatim copy
    with a test that fails on drift.
 7. **Latent `NameError`s from deleted helpers**: `webssh_tokens`,
-   `webssh_sessions`, `_save_webssh_token`, `LXC_BRIDGE`, and an invented
-   `_exc_text`. None of these are caught by `import bot`, because Python resolves
-   globals when the line executes. `LXC_BRIDGE` would have broken `!vps-network`;
-   the webssh names would have broken the admin scan and every PIN view.
-8. `acceptance_test.py` referenced `exc` after its `except` block ended.
-9. Two silent no-ops: `_with_guard()` and a `_recreate()` stub that raised
-   `NotImplementedError`. Both passed `compileall` and did nothing.
+   `webssh_sessions`, `_save_webssh_token`, and an invented `_exc_text`. None of
+   these are caught by `import bot`, because Python resolves globals when the
+   line executes. The webssh names would have broken the admin scan and every
+   PIN view.
+8. **`unix_networking.BRIDGE_NAME` does not exist** (line 9002, `!vps-network`).
+   This one shipped to `main` in PR #1. It is worth recording because the first
+   attempt to fix it made things worse: `LXC_BRIDGE` (an undefined *name*) was
+   replaced with `unix_networking.BRIDGE_NAME` (a valid module, missing
+   *attribute*) and reported as fixed. pyflakes reports **zero** undefined names
+   for it, and `import bot` is clean, so both existing checks passed. Fixed to
+   `unix_config.DOCKER_DEFAULT_NETWORK`, the value the provisioning path
+   actually reads.
+9. `acceptance_test.py` referenced `exc` after its `except` block ended.
+10. Two silent no-ops: `_with_guard()` and a `_recreate()` stub that raised
+    `NotImplementedError`. Both passed `compileall` and did nothing.
 
-`tests/test_static_integrity.py` now fails the build on any undefined global
-name. That guard was validated by re-injecting one of the bugs above and
-confirming the suite goes red.
+`tests/test_static_integrity.py` now fails the build on either failure mode:
+
+- **undefined global names** (pyflakes-backed), and
+- **attributes that do not exist on a valid `unixnodes` module** — every
+  `unix_<alias>.<ATTR>` access in `bot.py` is resolved against the imported
+  module.
+
+Both guards were validated by re-injecting the exact bug they target and
+confirming the suite goes red. The second guard matters precisely because
+pyflakes cannot see it: on the broken `BRIDGE_NAME` line pyflakes reports 0
+undefined names while the new test names line 9002.
 
 ---
 
@@ -195,6 +211,7 @@ listed here instead.
 | `test_ports.py` | 21 | reservation, conflicts, ranges, TCP/UDP, release, history, summary |
 | `test_provisioning.py` | 23 | happy path, rollback at each injected failure, plan validation, credential vault |
 | `test_web_terminal.py` | 18 | no password in page source, PIN lockout, ad-hoc refusal, headers, rate limits |
-| `test_static_integrity.py` | 10 | undefined globals, deleted-helper revival, progress-callback safety, no privileged mode |
+| `test_static_integrity.py` | 11 | undefined globals, unresolvable module attributes, deleted-helper revival, progress-callback safety, no privileged mode |
 
-Static analysis: **0 undefined names** across `bot.py`, `unixnodes/` and `tests/`.
+Static analysis: **0 undefined names** across `bot.py`, `unixnodes/` and
+`tests/`, and every `unixnodes` attribute access in `bot.py` resolves.
