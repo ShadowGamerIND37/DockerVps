@@ -22,7 +22,7 @@ database row intact. See [MIGRATION.md](MIGRATION.md) for the upgrade path.
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (128 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (129 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -202,7 +202,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**128 tests, all passing.** They cover the security policy, port allocation,
+**129 tests, all passing.** They cover the security policy, port allocation,
 schema migration, the provisioning transaction and rollback, the web terminal's
 credential handling, and backward compatibility across the UnixNodes → TGD Bot
 rebrand. They run against a fake Docker client (`tests/fake_docker.py`) and need

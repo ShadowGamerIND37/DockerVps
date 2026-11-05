@@ -3650,7 +3650,7 @@ class PanelPump:
 
     # ── coroutine helpers ───────────────────────────────────────────────────
     def start(self) -> None:
-        self._task = asyncio.ensure_future(self._run(), name="ui-panel-pump")
+        self._task = asyncio.create_task(self._run(), name="ui-panel-pump")
 
     async def _run(self) -> None:
         while True:

@@ -159,6 +159,11 @@ Writing tests surfaced real defects, not just test errors:
 9. `acceptance_test.py` referenced `exc` after its `except` block ended.
 10. Two silent no-ops: `_with_guard()` and a `_recreate()` stub that raised
     `NotImplementedError`. Both passed `compileall` and did nothing.
+11. `PanelPump.start()` passed `name=` to `asyncio.ensure_future()`, which does
+    not accept that keyword. Every provisioning attempt failed while starting
+    its progress panel, before container creation began. It now uses
+    `asyncio.create_task()`; `tests/test_panel_pump.py` reproduced the exact
+    `TypeError` before the fix and exercises the same start/emit/stop path.
 
 `tests/test_static_integrity.py` now fails the build on either failure mode:
 
@@ -236,7 +241,7 @@ above rather than exposing it:
 ## Test results
 
 ```
-128 passed
+129 passed
 ```
 
 | File | Tests | Covers |
@@ -244,6 +249,7 @@ above rather than exposing it:
 | `test_security_policy.py` | 24 | capability drop, privileged/socket/namespace refusal, name and image validation |
 | `test_migrations.py` | 13 | idempotency, backup integrity, rollback note, base-schema drift, fresh bootstrap |
 | `test_ports.py` | 21 | reservation, conflicts, ranges, TCP/UDP, release, history, summary |
+| `test_panel_pump.py` | 1 | runtime progress-pump start, named task, event delivery and shutdown |
 | `test_provisioning.py` | 23 | happy path, rollback at each injected failure, plan validation, credential vault |
 | `test_rebrand_compat.py` | 18 | pre-rebrand containers and volumes still resolve, foreign containers never adopted, filter OR semantics |
 | `test_web_terminal.py` | 18 | no password in page source, PIN lockout, ad-hoc refusal, headers, rate limits |
