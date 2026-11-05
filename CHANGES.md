@@ -48,7 +48,7 @@ Argon2id/PBKDF2 `hash_password`/`verify_password`, `validate_ssh_target`,
 | --- | --- | --- |
 | Container engine | `lxc` CLI, shelled out over SSH | Docker Engine API via the `docker` SDK |
 | Create workflow | ad-hoc sequence | 22-step transaction with per-step rollback |
-| Root filesystem | LXD storage pool | Named volume `unixnodes_<name>` mounted at `/` |
+| Root filesystem | LXD storage pool | Named volume `tgdbot_<name>` mounted at `/` |
 | Ports | LXD proxy devices | Docker port publishing, tracked in `docker_ports` |
 | Disk quota | `limits.disk` | XFS project quota or Btrfs qgroup, reported honestly |
 | Snapshots / backup | LXD snapshots | Volume tar archive + JSON side-car + sha256 |
@@ -57,11 +57,11 @@ Argon2id/PBKDF2 `hash_password`/`verify_password`, `validate_ssh_target`,
 | Clone | `lxc copy` | Volume duplicated via helper container |
 | Node transport | SSH to the LXD host | `local`, `ssh://`, or mutual TLS |
 | Container listing | `lxc list --format=csv` | Docker API, filtered by managed label |
-| Web SSH server | 737-line Flask/Paramiko impl in `bot.py` | `unixnodes/web/terminal.py` |
+| Web SSH server | 737-line Flask/Paramiko impl in `bot.py` | `tgdbot/web/terminal.py` |
 | Progress reporting | direct `await` from the loop | `PanelPump` bridging worker threads |
 
 **`bot.py` shrank from 12,259 to 11,636 lines** while gaining 13 commands, because
-the infrastructure moved into `unixnodes/` (9,441 lines across 33 modules).
+the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 
 ---
 
@@ -77,12 +77,12 @@ the infrastructure moved into `unixnodes/` (9,441 lines across 33 modules).
 
 | Path | Purpose |
 | --- | --- |
-| `unixnodes/platform.py` | Async facade; the only entry point `bot.py` uses |
-| `unixnodes/docker_backend/` | 12 Docker adapters |
-| `unixnodes/database/` | Schema, migrations, repository |
-| `unixnodes/services/` | Provisioning, lifecycle, backups, expiration, nodes |
-| `unixnodes/web/terminal.py` | Web SSH terminal |
-| `unixnodes/scripts/` | Installer, migration, healthcheck, acceptance test |
+| `tgdbot/platform.py` | Async facade; the only entry point `bot.py` uses |
+| `tgdbot/docker_backend/` | 12 Docker adapters |
+| `tgdbot/database/` | Schema, migrations, repository |
+| `tgdbot/services/` | Provisioning, lifecycle, backups, expiration, nodes |
+| `tgdbot/web/terminal.py` | Web SSH terminal |
+| `tgdbot/scripts/` | Installer, migration, healthcheck, acceptance test |
 | `tests/` | 109 tests + a fake Docker client |
 
 **Capability**
@@ -163,7 +163,7 @@ Writing tests surfaced real defects, not just test errors:
 `tests/test_static_integrity.py` now fails the build on either failure mode:
 
 - **undefined global names** (pyflakes-backed), and
-- **attributes that do not exist on a valid `unixnodes` module** — every
+- **attributes that do not exist on a valid `tgdbot` module** — every
   `unix_<alias>.<ATTR>` access in `bot.py` is resolved against the imported
   module.
 
@@ -189,7 +189,7 @@ engine:
 - The live Discord UI (requires a real bot token and gateway)
 - Storage-quota behaviour on a host with a quota-capable filesystem
 
-`unixnodes/scripts/acceptance_test.py` covers all of the above with 33 checks
+`tgdbot/scripts/acceptance_test.py` covers all of the above with 33 checks
 across 25 groups and must be run on a real host. It reports the daemon as
 unreachable rather than fabricating a pass.
 
@@ -198,10 +198,45 @@ listed here instead.
 
 ---
 
+## Rebrand — UnixNodes → TGD Bot
+
+The project was renamed to **TGD Bot** (developer: **ShadowGamerIND**). Display
+strings, the package path (`unixnodes/` → `tgdbot/`), the systemd unit and the
+docs changed freely. **Runtime identifiers could not**, because Docker labels
+are immutable after creation and Docker has no volume rename. Both generations
+are therefore matched:
+
+| | Current | Pre-rebrand, still matched |
+| --- | --- | --- |
+| Managed filter | `tgdbot.managed=true` | `unixnodes.managed=true` |
+| Volume prefix | `tgdbot_` | `unixnodes_` |
+
+No volume is copied, moved or renamed by the rebrand, and no container is
+recreated. Details and the per-operation behaviour are in
+[MIGRATION.md](MIGRATION.md#rebranding-unixnodes--tgd-bot).
+
+Writing these tests found four further defects, all of which would have lost or
+mis-attached customer data on an existing install:
+
+| Defect | Effect before the fix |
+| --- | --- |
+| `containers.py` hardcoded `"unixnodes.managed=true"` at three call sites | `!docker-list`, `!dashboard`, `!docker-quota` and the state counts would have reported **zero** containers the moment the label changed |
+| `volumes.rename()` recomputed the *source* name | cloning any pre-rebrand VPS would fail with "Source volume does not exist" |
+| `lifecycle.recreate()` / `resize()` recomputed the volume name | a resize or port change would attach a **new, empty** volume and the VPS would appear wiped |
+| `migrate()` never wrote the target `volume_name` | after a node migration the row pointed at a volume that no longer existed |
+
+Two defects in the test fake were also fixed, both of which had been masking the
+above rather than exposing it:
+
+- `volumes.list()` returned a non-iterable wrapper; docker-py returns a plain list.
+- `containers.list()` **AND**'d repeated `label` filter values; the real API **OR**'s them.
+  With AND semantics the widened filter silently matched nothing, so the broken
+  code path looked green.
+
 ## Test results
 
 ```
-109 passed
+128 passed
 ```
 
 | File | Tests | Covers |
@@ -210,8 +245,9 @@ listed here instead.
 | `test_migrations.py` | 13 | idempotency, backup integrity, rollback note, base-schema drift, fresh bootstrap |
 | `test_ports.py` | 21 | reservation, conflicts, ranges, TCP/UDP, release, history, summary |
 | `test_provisioning.py` | 23 | happy path, rollback at each injected failure, plan validation, credential vault |
+| `test_rebrand_compat.py` | 18 | pre-rebrand containers and volumes still resolve, foreign containers never adopted, filter OR semantics |
 | `test_web_terminal.py` | 18 | no password in page source, PIN lockout, ad-hoc refusal, headers, rate limits |
 | `test_static_integrity.py` | 11 | undefined globals, unresolvable module attributes, deleted-helper revival, progress-callback safety, no privileged mode |
 
-Static analysis: **0 undefined names** across `bot.py`, `unixnodes/` and
-`tests/`, and every `unixnodes` attribute access in `bot.py` resolves.
+Static analysis: **0 undefined names** across `bot.py`, `tgdbot/` and
+`tests/`, and every `tgdbot` attribute access in `bot.py` resolves.

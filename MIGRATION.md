@@ -1,6 +1,6 @@
 # Migration Guide — v10 (LXC/LXD) → v11 (Docker Engine)
 
-This document covers upgrading an existing UnixNodes v10 installation to v11.
+This document covers upgrading an existing TGD Bot v10 installation to v11.
 
 **Read this before you start.** The database migration is automatic, safe and
 reversible. The infrastructure migration is **not** automatic — your existing LXC
@@ -13,7 +13,7 @@ containers are deliberately left alone, and nothing is deleted for you.
 | | v10 | v11 |
 | --- | --- | --- |
 | VPS backend | LXC/LXD via `lxc` CLI over SSH | Docker Engine via the Docker SDK |
-| Root filesystem | LXD storage pool + container | Named volume `unixnodes_<name>` mounted at `/` |
+| Root filesystem | LXD storage pool + container | Named volume `tgdbot_<name>` mounted at `/` |
 | Ports | LXD proxy devices | Docker port publishing, tracked in `docker_ports` |
 | Disk quota | LXD `limits.disk` | XFS project quota or Btrfs qgroup — **where supported** |
 | Snapshots | LXD snapshots | Volume tar archives (not atomic snapshots) |
@@ -42,12 +42,12 @@ same name.
 
 4. **Stop the bot**:
    ```bash
-   systemctl stop unixnodes
+   systemctl stop tgdbot
    ```
 
 5. **Install Docker Engine** on every node that will host VPS:
    ```bash
-   bash unixnodes/scripts/install_docker.sh
+   bash tgdbot/scripts/install_docker.sh
    docker version
    ```
    The installer does not run destructive cleanup commands. If you have an old
@@ -72,7 +72,7 @@ git pull                                    # or extract the v11 release over th
 source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m unixnodes.scripts.migrate_database
+python -m tgdbot.scripts.migrate_database
 ```
 
 Read the output. It tells you exactly what happened. Then:
@@ -162,16 +162,95 @@ Docker reservations count.
 
 ---
 
+## Rebranding (UnixNodes → TGD Bot)
+
+The project was renamed from **UnixNodes** to **TGD Bot**, and the developer
+identity from **Hopingboyz** to **ShadowGamerIND**.
+
+Display strings — bot name, banner, embeds, docs, package path, systemd unit —
+were changed freely. **Runtime identifiers could not be**, because of two hard
+Docker constraints:
+
+| Identifier | Why it cannot just be renamed |
+| --- | --- |
+| Container labels (`unixnodes.*`) | Labels are immutable once a container exists. |
+| Volume names (`unixnodes_*`) | Docker has **no volume rename**. Only copy-then-delete works. |
+
+So the rebrand matches both old and new identifiers instead of rewriting them.
+**No volume is copied, moved or renamed**, and no container is recreated as part
+of this change. Existing VPS keep running and keep their data.
+
+### What still resolves
+
+| Thing | Current | Pre-rebrand, still matched |
+| --- | --- | --- |
+| Managed-container filter | `tgdbot.managed=true` | `unixnodes.managed=true` |
+| Container / owner / VPS labels | `tgdbot.container`, `tgdbot.owner`, `tgdbot.vps-id` | the `unixnodes.*` equivalents |
+| Volume prefix | `tgdbot_` | `unixnodes_` |
+
+The resolution order for a volume is:
+
+1. the `volume_name` recorded in the database (authoritative),
+2. `tgdbot_<container>`,
+3. `unixnodes_<container>`, if that volume exists.
+
+New VPS are always created under `tgdbot_`. A pre-rebrand VPS is only rewritten
+if you act on it — and even then its existing volume is reused, not recreated:
+
+- **start / stop / restart / resize / suspend** — reuse the existing volume as-is.
+- **recreate** (ports, resize, reinstall without wipe) — reattaches the *same*
+  volume; the database keeps the name it already had.
+- **reinstall with wipe** — deletes the old volume and creates a fresh one under
+  `tgdbot_`. The database is updated. This is the only path that changes the name.
+- **clone** — copies the source volume to a new `tgdbot_` name.
+- **migrate** — archives, transfers, restores; the target volume is `tgdbot_`.
+
+### Orphan detection
+
+`!docker-orphans` compares live containers against the database. Containers
+carrying either label generation count as managed, so a pre-rebrand container is
+**not** reported as an orphan.
+
+The scan only ever looks at containers carrying one of those two labels
+(`orphans()` → `orphaned_containers()` → `list_managed()`). A container with no
+managed label is therefore neither managed nor an orphan — it is simply not
+ours, and the widened filter never adopts it. `test_unmanaged_container_is_never_claimed`
+pins that.
+
+### Verifying after an upgrade
+
+```bash
+# Both label generations appear, nothing is orphaned
+!docker-policy
+!docker-orphans
+
+# A pre-rebrand VPS still lists, and its volume is the old one
+!vps-info <name>
+docker volume ls | grep -E 'tgdbot_|unixnodes_'
+```
+
+Pinned by `tests/test_rebrand_compat.py` (18 tests), including
+`test_label_list_is_ored_not_anded`, which keeps the test fake honest about the
+Docker API's OR semantics for repeated filter keys.
+
+### Optional: retiring the legacy names
+
+Nothing requires this. If you want every volume under `tgdbot_`, clone each VPS
+to a new name and delete the original during a maintenance window — that copies
+the data. There is no in-place rename, and the bot will not attempt one.
+
+---
+
 ## Rolling back
 
 The database is a single file, so rollback is a restore:
 
 ```bash
-systemctl stop unixnodes
+systemctl stop tgdbot
 cp "db_backups/<timestamp>-vps.db" vps.db
 git checkout <v10-tag>
 pip install -r requirements.txt
-systemctl start unixnodes
+systemctl start tgdbot
 ```
 
 Note that `ALTER TABLE ... ADD COLUMN` cannot be undone in SQLite, which is why
@@ -184,7 +263,7 @@ Any Docker containers created by v11 are unaffected by a database rollback. Find
 and clean them up by label:
 
 ```bash
-docker ps -a --filter label=unixnodes.managed=1
+docker ps -a --filter label=tgdbot.managed=1
 ```
 
 ---
@@ -200,12 +279,12 @@ docker ps -a --filter label=unixnodes.managed=1
 | `DOCKER_SSH_PORT_START` / `DOCKER_SSH_PORT_END` | Pool for VPS SSH ports. Default `22000` / `22999`. |
 | `DOCKER_PORT_RANGE_START` / `DOCKER_PORT_RANGE_END` | Pool for user-published ports. Default `25000` / `26999`. |
 | `DOCKER_RESERVED_PORTS` | Host ports never to hand out. |
-| `DOCKER_VOLUME_PREFIX` | Volume naming prefix. Default `unixnodes_`. |
+| `DOCKER_VOLUME_PREFIX` | Volume naming prefix. Default `tgdbot_`. |
 | `DOCKER_CPU_PERIOD` | CPU quota period in microseconds. Default `100000`. |
 | `DOCKER_DEFAULT_PID_LIMIT` | Per-container PID ceiling. Default `512`. |
 | `DOCKER_DEFAULT_IMAGE` | Image used when none is specified. Default `ubuntu:24.04`. |
 | `DOCKER_ENFORCE_DISK_QUOTA` | Attempt XFS/Btrfs quota enforcement. Default `true`. |
-| `DOCKER_BACKUP_DIR` | Where volume archives are written. Default `/var/backups/unixnodes`. |
+| `DOCKER_BACKUP_DIR` | Where volume archives are written. Default `/var/backups/tgdbot`. |
 | `DOCKER_BACKUP_KEEP` / `DOCKER_BACKUP_RETENTION_DAYS` | Retention. Default `4` / `30`. |
 | `DOCKER_BACKUP_INTERVAL_HOURS` | How often the scheduled backup pass runs. |
 | `SSH_CONTAINER_PORT` | The port sshd listens on inside the container. Default `22`. |

@@ -145,7 +145,7 @@ def test_docker_socket_is_never_mounted_into_a_customer_container(bot_source):
 def test_infra_is_the_only_docker_entry_point(bot_source, bot_tree):
     """
     bot.py must not talk to the Docker SDK directly — that is what the
-    `unixnodes` package exists for.
+    `tgdbot` package exists for.
 
     The one exception is the startup probe in `startup_checks()`, which pings the
     engine to warn about a missing daemon.  Anything outside that function is a
@@ -164,7 +164,7 @@ def test_infra_is_the_only_docker_entry_point(bot_source, bot_tree):
         enclosing = _enclosing_function(bot_tree, lineno)
         assert enclosing in probe_ok, (
             f"bot.py:{lineno} imports `{what}` inside {enclosing or '<module scope>'}; "
-            "Docker belongs in the unixnodes package")
+            "Docker belongs in the tgdbot package")
 
 
 def test_the_credential_vault_is_installed(bot_source):
@@ -177,12 +177,12 @@ def test_the_credential_vault_is_installed(bot_source):
 
 def test_init_db_runs_the_migration_engine(bot_source):
     """The Docker tables only exist if init_db() delegates to the migrator."""
-    assert "unix_migrations.migrate(" in bot_source
+    assert "tgd_migrations.migrate(" in bot_source
 
 
 def test_every_progress_callback_is_thread_safe(bot_source):
     """
-    The unixnodes services invoke `progress(...)` from a worker thread.  Passing
+    The tgdbot services invoke `progress(...)` from a worker thread.  Passing
     a coroutine there is broken, so every call must use a PanelPump.
     """
     tree = ast.parse(bot_source)
@@ -214,12 +214,12 @@ def test_bot_module_names_resolve(bot_tree, bot_source):
     assert not missing, f"possibly undefined names: {sorted(missing)}"
 
 
-def _unix_alias_map(tree: ast.Module) -> dict:
+def _tgd_alias_map(tree: ast.Module) -> dict:
     """
-    Map bot.py's ``unix_*`` import aliases to the real module objects.
+    Map bot.py's ``tgd_*`` import aliases to the real module objects.
 
     Only aliases that name a *module* are collected.  Aliases bound to a
-    function (``run_in_thread as unix_run_in_thread``) are skipped — attribute
+    function (``run_in_thread as tgd_run_in_thread``) are skipped — attribute
     access on those is not the failure mode this guard targets.
     """
     import importlib
@@ -229,11 +229,11 @@ def _unix_alias_map(tree: ast.Module) -> dict:
         if not isinstance(node, ast.ImportFrom):
             continue
         module = node.module or ""
-        if not module.startswith("unixnodes"):
+        if not module.startswith("tgdbot"):
             continue
         for alias in node.names:
             name = alias.asname or ""
-            if not name.startswith("unix_"):
+            if not name.startswith(ALIAS_PREFIX):
                 continue
             try:
                 aliases[name] = importlib.import_module(f"{module}.{alias.name}")
@@ -242,21 +242,25 @@ def _unix_alias_map(tree: ast.Module) -> dict:
     return aliases
 
 
-def test_every_unix_attribute_access_resolves(bot_tree):
-    """
-    Every `unix_<alias>.<ATTR>` in bot.py must exist on the real module.
+#: bot.py imports the platform under short aliases (``config as tgd_config``).
+ALIAS_PREFIX = "tgd_"
 
-    This is the bug pyflakes cannot see. `unix_networking.BRIDGE_NAME` was
+
+def test_every_tgd_attribute_access_resolves(bot_tree):
+    """
+    Every `tgd_<alias>.<ATTR>` in bot.py must exist on the real module.
+
+    This is the bug pyflakes cannot see. `tgd_networking.BRIDGE_NAME` was
     shipped to `main` and broke `!vps-network` at runtime: pyflakes reports
-    **zero** undefined names for it, because `unix_networking` is a perfectly
+    **zero** undefined names for it, because `tgd_networking` is a perfectly
     valid module — only the attribute is missing. Python resolves the attribute
     when the line executes, so `import bot` is clean too.
 
     Resolving the accesses against the imported modules turns that whole class
     of typo into a test failure.
     """
-    aliases = _unix_alias_map(bot_tree)
-    assert aliases, "no unixnodes aliases were found in bot.py — the check is broken"
+    aliases = _tgd_alias_map(bot_tree)
+    assert aliases, "no tgdbot aliases were found in bot.py — the check is broken"
 
     bad = []
     for node in ast.walk(bot_tree):
@@ -270,6 +274,6 @@ def test_every_unix_attribute_access_resolves(bot_tree):
             bad.append(f"{base.id}.{node.attr} (line {node.lineno})")
 
     assert not bad, (
-        "bot.py reads attributes that do not exist on the unixnodes modules — "
+        "bot.py reads attributes that do not exist on the tgdbot modules — "
         "these raise AttributeError at runtime, not at import:\n  "
         + "\n".join(sorted(set(bad))))

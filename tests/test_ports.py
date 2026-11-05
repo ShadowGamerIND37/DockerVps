@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import pytest
 
-from unixnodes import config
-from unixnodes.docker_backend.ports import PURPOSE_SSH, PURPOSE_USER, PortAllocator
-from unixnodes.errors import NoFreePort, PortConflict
+from tgdbot import config
+from tgdbot.docker_backend.ports import PURPOSE_SSH, PURPOSE_USER, PortAllocator
+from tgdbot.errors import NoFreePort, PortConflict
 
 
 @pytest.fixture()

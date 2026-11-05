@@ -1,7 +1,7 @@
 """
 Fake Docker SDK client.
 
-Implements just enough of ``docker.DockerClient`` for the UnixNodes backend to
+Implements just enough of ``docker.DockerClient`` for the TGD Bot backend to
 run end-to-end in a sandbox with no Docker daemon.  It records every call so
 tests can assert on what the backend actually asked for, and it can be told to
 fail at a chosen step so rollback paths are exercised for real.
@@ -145,7 +145,7 @@ class FakeContainer:
 
     def logs(self, tail: Any = "all", follow: bool = False, timestamps: bool = False) -> bytes:
         self.engine.fail_if("container.logs")
-        return self.engine.container_logs.get(self.name, b"unixnodes: sshd ready\n")
+        return self.engine.container_logs.get(self.name, b"tgdbot: sshd ready\n")
 
     def stats(self, stream: bool = True) -> Any:
         self.engine.fail_if("container.stats")
@@ -194,8 +194,14 @@ class FakeContainerCollection:
     def __init__(self, engine: "FakeEngine") -> None:
         self.engine = engine
 
-    def create(self, **kwargs: Any) -> FakeContainer:
+    def create(self, image: Any = None, command: Any = None,
+               **kwargs: Any) -> FakeContainer:
+        """``image`` and ``command`` are positional in docker-py; accept both."""
         self.engine.fail_if("containers.create")
+        if image is not None:
+            kwargs.setdefault("image", image)
+        if command is not None:
+            kwargs.setdefault("command", command)
         name = str(kwargs.get("name") or "")
         if name in self.engine.containers:
             raise Conflict(f"Conflict. The container name /{name} is already in use")
@@ -231,9 +237,18 @@ class FakeContainerCollection:
 
     @staticmethod
     def _matches(container: FakeContainer, label: Any) -> bool:
+        """
+        Docker label-filter semantics.
+
+        Multiple values for the SAME filter key are **OR**'d by the real API:
+        ``filters={"label": ["a=1", "b=2"]}`` matches a container carrying
+        either label.  AND only applies across *different* keys.  Getting this
+        wrong hides real breakage, so it is pinned by
+        tests/test_rebrand_compat.py::test_label_list_is_ored_not_anded.
+        """
         labels = container.attrs["Config"]["Labels"]
         if isinstance(label, (list, tuple)):
-            return all(FakeContainerCollection._matches(container, item) for item in label)
+            return any(FakeContainerCollection._matches(container, item) for item in label)
         key, _, value = str(label).partition("=")
         if not value:
             return key in labels
@@ -332,15 +347,11 @@ class FakeVolumeCollection:
                 if value and attrs["Labels"].get(key) != value:
                     continue
             items.append(_FakeVolume(self.engine, name))
-        return _VolumeList(items)
+        # docker-py returns a plain list of Volume objects, not a wrapper.
+        return items
 
     def prune(self, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         return {"VolumesDeleted": [], "SpaceReclaimed": 0}
-
-
-class _VolumeList:
-    def __init__(self, volumes: List[Any]) -> None:
-        self.volumes = volumes
 
 
 class _FakeVolume:

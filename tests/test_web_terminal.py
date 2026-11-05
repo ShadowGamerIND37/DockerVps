@@ -15,7 +15,7 @@ import re
 
 import pytest
 
-from unixnodes.web import terminal as terminal_mod
+from tgdbot.web import terminal as terminal_mod
 
 
 class FakeVault:

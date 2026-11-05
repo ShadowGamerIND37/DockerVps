@@ -1,4 +1,4 @@
-# UnixNodes — Docker VPS Hosting Bot
+# TGD Bot — Docker VPS Hosting Bot
 
 A Discord bot that hands out real Linux VPS instances backed by **Docker Engine**.
 Users create a VPS from Discord, get a root password and an SSH port, and log in
@@ -15,18 +15,18 @@ database row intact. See [MIGRATION.md](MIGRATION.md) for the upgrade path.
 | Path | What it is |
 | --- | --- |
 | `bot.py` | The Discord application. UI, commands, permissions, panels, background loops. |
-| `unixnodes/` | The infrastructure package. All Docker, database and service logic. |
-| `unixnodes/docker_backend/` | Docker Engine adapters: containers, images, volumes, ports, security, SSH, backups, monitoring, nodes. |
-| `unixnodes/database/` | Schema, migrations and the repository. |
-| `unixnodes/services/` | Business logic: provisioning, lifecycle, backups, expiration, nodes. |
-| `unixnodes/web/` | The web SSH terminal (Flask). |
-| `unixnodes/scripts/` | Installer, database migration, healthcheck and acceptance test. |
+| `tgdbot/` | The infrastructure package. All Docker, database and service logic. |
+| `tgdbot/docker_backend/` | Docker Engine adapters: containers, images, volumes, ports, security, SSH, backups, monitoring, nodes. |
+| `tgdbot/database/` | Schema, migrations and the repository. |
+| `tgdbot/services/` | Business logic: provisioning, lifecycle, backups, expiration, nodes. |
+| `tgdbot/web/` | The web SSH terminal (Flask). |
+| `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (99 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (128 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
-`unixnodes.platform.Platform` (imported as `INFRA`), which is an async facade over
+`tgdbot.platform.Platform` (imported as `INFRA`), which is an async facade over
 synchronous services that run on a bounded worker pool.
 
 ---
@@ -45,7 +45,7 @@ synchronous services that run on a bounded worker pool.
 ## Install
 
 ```bash
-git clone <your-fork> UnixNodes && cd UnixNodes
+git clone <your-fork> TGD Bot && cd TGD Bot
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -54,7 +54,7 @@ pip install -r requirements.txt
 cp .env.example .env
 $EDITOR .env          # at minimum: DISCORD_TOKEN, YOUR_SERVER_IP, MAIN_ADMIN_ID
 
-python -m unixnodes.scripts.migrate_database     # creates or upgrades vps.db
+python -m tgdbot.scripts.migrate_database     # creates or upgrades vps.db
 python bot.py
 ```
 
@@ -66,7 +66,7 @@ the script — but running it first lets you read the report before the bot star
 A helper installer is available if you prefer one command:
 
 ```bash
-bash unixnodes/scripts/install.sh          # never runs destructive Docker cleanup
+bash tgdbot/scripts/install.sh          # never runs destructive Docker cleanup
 ```
 
 ---
@@ -114,7 +114,7 @@ A container running a real init process and `sshd`, with:
 
 - **Root SSH login** on a dedicated host port, password authentication
 - **Bash or ash**, `apt` / `apk`, cron, SFTP
-- **A persistent named volume** (`unixnodes_<name>`) mounted as the container root,
+- **A persistent named volume** (`tgdbot_<name>`) mounted as the container root,
   so data survives restart, resize, reinstall and port changes
 - **RAM, CPU and PID limits** enforced by the kernel
 - **Storage quota** where the host filesystem supports it
@@ -202,16 +202,17 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**99 tests, all passing.** They cover the security policy, port allocation,
-schema migration, the provisioning transaction and rollback, and the web
-terminal's credential handling. They run against a fake Docker client
-(`tests/fake_docker.py`) and need **no Docker daemon**.
+**128 tests, all passing.** They cover the security policy, port allocation,
+schema migration, the provisioning transaction and rollback, the web terminal's
+credential handling, and backward compatibility across the UnixNodes → TGD Bot
+rebrand. They run against a fake Docker client (`tests/fake_docker.py`) and need
+**no Docker daemon**.
 
 For a real host, after installation:
 
 ```bash
-python -m unixnodes.scripts.healthcheck        # read-only environment report
-python -m unixnodes.scripts.acceptance_test    # 33 checks across 25 test groups
+python -m tgdbot.scripts.healthcheck        # read-only environment report
+python -m tgdbot.scripts.acceptance_test    # 33 checks across 25 test groups
 ```
 
 `acceptance_test.py` creates, connects to, resizes, backs up, restores, suspends
