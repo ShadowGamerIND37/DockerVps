@@ -131,7 +131,7 @@ Every customer container is created with:
 
 | Control | Setting |
 | --- | --- |
-| Privileged mode | **never** — `privileged=False`, hardcoded |
+| Privileged mode | off by default (`DOCKER_PRIVILEGED=false`); enabling it logs a loud warning |
 | Capabilities | dropped (`DEFAULT_CAP_DROP`), keeping only the 8 a real OS needs |
 | Docker socket | **never** mounted into a customer container |
 | Host devices / namespaces | **never** shared (no `pid=host`, `net=host`, `/dev` mounts) |
