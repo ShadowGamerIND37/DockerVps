@@ -4,7 +4,7 @@
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║              UNIXNODES  •  VPS CONTROL BOT  •  v10.0 ULTRA-ANIMATED          ║
 ║                                                                              ║
-║   A full-featured Discord bot for managing LXC based VPS infrastructure.     ║
+║   A full-featured Discord bot for managing Docker based VPS infrastructure.     ║
 ║                                                                              ║
 ║   v9.0 "ULTRA" release highlights (kept 100% intact)                         ║
 ║   ─────────────────────────────────────────────────────────────────────────  ║
@@ -118,6 +118,66 @@ BASE_DIR = Path(__file__).resolve().parent
 # Load .env from the script folder first, then CWD (never crash if missing).
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
 load_dotenv(override=False)
+# ── UnixNodes v11 Docker platform ────────────────────────────────────────────
+#  All infrastructure lives in the `unixnodes` package: the Docker Engine
+#  backend, the schema/migrations, the transactional provisioning pipeline and
+#  the Web SSH terminal service.  bot.py keeps the Discord surface.
+try:
+    from unixnodes import config as unix_config
+    from unixnodes import platform as unix_platform
+    from unixnodes.concurrency import (
+        shutdown_pool as unix_close_pool,
+        reload_limits as unix_reload_limits,
+        run_in_thread as unix_run_in_thread,
+    )
+    from unixnodes.database import migrations as unix_migrations
+    from unixnodes.database import models as unix_models
+    from unixnodes.docker_backend import (
+        backups as unix_backups,
+        containers as unix_ctr,
+        images as unix_images,
+        monitoring as unix_monitoring,
+        networking as unix_networking,
+        nodes as unix_nodes_mod,
+        ports as unix_ports_mod,
+        resources as unix_resources,
+        security as unix_security,
+        ssh as unix_ssh,
+        volumes as unix_volumes,
+    )
+    from unixnodes.errors import (
+        BackupError as UnixBackupError,
+        ContainerError as UnixContainerError,
+        ContainerNotFound as UnixContainerNotFound,
+        DockerUnavailable as UnixDockerError,
+        ImageError as UnixImageError,
+        NodeDisabled as UnixNodeDisabled,
+        NodeNotFound as UnixNodeNotFound,
+        NoFreePort as UnixNoFreePort,
+        PortConflict as UnixPortConflict,
+        PortError as UnixPortError,
+        ProvisioningError as UnixProvisioningError,
+        QuotaUnsupported as UnixQuotaError,
+        SecurityPolicyError as UnixSecurityError,
+        SSHSetupError as UnixSSHError,
+        UnixNodesError,
+        VolumeError as UnixVolumeError,
+    )
+    from unixnodes.services import (
+        backup_service as unix_backup_service,
+        expiration as unix_expiration,
+        lifecycle as unix_lifecycle,
+        node_service as unix_node_service,
+        provisioning as unix_provisioning,
+    )
+
+    INFRA = unix_platform.platform          # async façade used by every command
+    UNIXNODES_AVAILABLE = True
+except ImportError as _exc:  # pragma: no cover
+    sys.exit(
+        "FATAL: the unixnodes Docker platform could not be imported: %s\n"
+        "Run:  pip install -r requirements.txt" % _exc
+    )
 
 
 def _env(key: str, default: Any = None) -> Optional[str]:
@@ -173,9 +233,9 @@ YOUR_SERVER_IP: str = str(_env("YOUR_SERVER_IP", "127.0.0.1"))
 MAIN_ADMIN_ID: int = _env_id("MAIN_ADMIN_ID", 0)
 VPS_USER_ROLE_ID: Optional[int] = _env_id("VPS_USER_ROLE_ID", 0) or None
 DEFAULT_STORAGE_POOL: str = str(_env("DEFAULT_STORAGE_POOL", "default"))
-LXC_BRIDGE: str = str(_env("LXC_BRIDGE", "lxdbr0"))
+DOCKER_NETWORK_NAME: str = str(_env("DOCKER_DEFAULT_NETWORK", unix_config.DOCKER_DEFAULT_NETWORK))
 HOST_MOTD: str = str(_env("HOST_MOTD", ""))
-BOT_VERSION: str = str(_env("BOT_VERSION", "10.0-ULTRA-ANIMATED"))
+BOT_VERSION: str = str(_env("BOT_VERSION", "11.0-DOCKER"))
 BOT_DEVELOPER: str = str(_env("BOT_DEVELOPER", "Hopingboyz"))
 BOT_THUMBNAIL_URL: str = str(_env("BOT_THUMBNAIL_URL", ""))
 BOT_ICON_URL: str = str(_env("BOT_ICON_URL", ""))
@@ -220,55 +280,14 @@ WEBSSH_PIN_ATTEMPTS: int = _env_int("WEBSSH_PIN_ATTEMPTS", 5)
 WEBSSH_CONNECT_TIMEOUT: int = _env_int("WEBSSH_CONNECT_TIMEOUT", 15)
 
 # ── Available Operating Systems ──────────────────────────────────────────────
-SUPPORTED_OS_OPTIONS = [
-    {
-        "name": "Ubuntu 22.04 LTS",
-        "image": "ubuntu:22.04",
-        "emoji": "🐧",
-        "description": "Latest stable Ubuntu (recommended)",
-        "features": ["SSH", "Docker", "Systemd"],
-    },
-    {
-        "name": "Ubuntu 20.04 LTS",
-        "image": "ubuntu:20.04",
-        "emoji": "🐧",
-        "description": "LTS with long support",
-        "features": ["SSH", "Docker", "Systemd"],
-    },
-    {
-        "name": "Debian 12 (Bookworm)",
-        "image": "debian:12",
-        "emoji": "🔴",
-        "description": "Stable Debian release",
-        "features": ["SSH", "Lightweight", "Systemd"],
-    },
-    {
-        "name": "Debian 11 (Bullseye)",
-        "image": "debian:11",
-        "emoji": "🔴",
-        "description": "Proven Debian stable",
-        "features": ["SSH", "Lightweight", "Systemd"],
-    },
-    {
-        "name": "Alpine Linux 3.18",
-        "image": "alpine:3.18",
-        "emoji": "⛰️",
-        "description": "Ultra-lightweight (~5MB)",
-        "features": ["SSH", "Minimal", "Fast boot"],
-    },
-    {
-        "name": "CentOS 7",
-        "image": "centos:7",
-        "emoji": "🎩",
-        "description": "RHEL-based, enterprise",
-        "features": ["SSH", "YUM", "Systemd"],
-    },
-]
+# v11: legacy alias kept for any custom code that imported the name.  It now
+# mirrors the Docker image catalogue instead of the old LXC image list.
+SUPPORTED_OS_OPTIONS = unix_images.catalogue()
 
 # Add to database schema
 def get_default_os() -> str:
-    """Get the default OS for VPS creation."""
-    return "ubuntu:22.04"
+    """Default image for VPS creation (DOCKER_DEFAULT_IMAGE)."""
+    return unix_config.DOCKER_DEFAULT_IMAGE
 
 # ── Rate limiting / abuse ────────────────────────────────────────────────────
 RATE_LIMIT_COOLDOWN: float = float(_env_int("RATE_LIMIT_COOLDOWN", 4))
@@ -277,12 +296,15 @@ RATE_LIMIT_MAX_VIOLATIONS: int = _env_int("RATE_LIMIT_MAX_VIOLATIONS", 3)
 RATE_LIMIT_BURST: int = _env_int("RATE_LIMIT_BURST", 3)
 
 # ── Command safety ───────────────────────────────────────────────────────────
-LXC_TIMEOUT_DEFAULT: int = _env_int("LXC_TIMEOUT_DEFAULT", 180)
+DOCKER_TIMEOUT_DEFAULT: int = _env_int("DOCKER_TIMEOUT_DEFAULT", 180)
 MAX_CONTAINER_NAME_LEN: int = 63
 COMMAND_TIMEOUT_SECONDS: int = _env_int("COMMAND_TIMEOUT_SECONDS", 240)
 MAX_REASON_LEN: int = 300
 MANAGE_PANEL_TIMEOUT: int = _env_int("MANAGE_PANEL_TIMEOUT", 300)
 CONSOLE_PANEL_TIMEOUT: int = _env_int("CONSOLE_PANEL_TIMEOUT", 600)
+# Volume archives stream through a helper container, so they get a longer window
+# than an interactive command.
+BACKUP_TIMEOUT: int = _env_int("BACKUP_TIMEOUT", 1800)
 STATS_REFRESH_SECONDS: int = max(4, _env_int("STATS_REFRESH_SECONDS", 5))
 MAX_LIVE_REFRESHES: int = _env_int("MAX_LIVE_REFRESHES", 60)
 OWNER_IDS: Tuple[int, ...] = tuple(
@@ -613,7 +635,7 @@ _CONTAINER_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 def validate_container_name(name: str) -> Tuple[bool, str]:
-    """LXC/docker style name: lowercase alnum + hyphens, 1-63 chars."""
+    """Docker container name: lowercase alnum + hyphens, 1-63 chars."""
     if not name:
         return False, "Container name cannot be empty"
     if len(name) > MAX_CONTAINER_NAME_LEN:
@@ -683,7 +705,7 @@ def sanitize_reason(reason: str, default: str = "No reason provided") -> str:
 
 
 def sanitize_username_for_container(username: str) -> str:
-    """Turn a Discord-ish name into a valid LXC container prefix."""
+    """Turn a Discord-ish name into a valid container-name prefix."""
     sanitized = re.sub(r"[^a-zA-Z0-9-]+", "-", str(username or "")).strip("-").lower()
     sanitized = sanitized.lstrip("0123456789") or "user"
     return sanitized[:24] or "user"
@@ -744,7 +766,7 @@ def check_rate_limit(user_id: Union[int, str], *, cost: float = 1.0) -> Tuple[bo
     Token-bucket limiter.
 
     Returns (allowed, message). Sustained abuse escalates to a temporary
-    cooldown so a single user cannot hammer LXC / Discord.
+    cooldown so a single user cannot hammer Docker / Discord.
     """
     key = str(user_id)
     now = time.time()
@@ -972,7 +994,7 @@ def executemany(sql: str, seq: Iterable[Sequence[Any]]) -> int:
 
 # ── 4.1 Schema ───────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = unix_models.SCHEMA_VERSION
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -1145,6 +1167,27 @@ _MIGRATIONS: List[Tuple[str, str]] = [
 
 def init_db() -> None:
     """Create schema, migrate old databases, verify integrity."""
+    # Run the unixnodes migration engine first: it backs up the file, adds the
+    # Docker columns and tables (docker_ports, docker_backups, docker_images,
+    # resource_plans, storage_quotas, migration_reports), seeds the image
+    # catalogue and tags any legacy LXC rows.  It is idempotent and refuses to
+    # convert a legacy row into a Docker one.
+    report = unix_migrations.migrate(
+        DB_FILE, backup_dir=DB_BACKUP_DIR,
+        report_dir=(BASE_DIR / "migration_reports"))
+    if report.error:
+        logger.critical("Database migration FAILED: %s", report.error)
+        logger.critical("Roll back with: %s", unix_migrations.rollback_note(report))
+    elif (report.from_version != report.to_version
+          or report.tables_created or report.columns_added or report.legacy_rows_tagged):
+        logger.warning(
+            "DATABASE MIGRATED v%s → v%s — %d table(s) created, %d column(s) added, "
+            "%d legacy row(s) tagged",
+            report.from_version, report.to_version, len(report.tables_created),
+            len(report.columns_added), report.legacy_rows_tagged)
+    for warning in report.warnings:
+        logger.warning("Migration: %s", warning)
+
     with _db_lock:
         conn = _new_connection()
         try:
@@ -1436,6 +1479,14 @@ def get_all_user_ids_with_vps() -> List[str]:
     return [str(r["user_id"]) for r in query_all("SELECT DISTINCT user_id FROM vps")]
 
 
+# ── 4.5b Docker metadata columns (added by the v11 schema migration) ───────
+DOCKER_VPS_FIELDS: Tuple[str, ...] = (
+    "backend", "docker_container_id", "docker_image", "volume_name",
+    "ssh_host_port", "pid_limit", "quota_method", "quota_enforced",
+    "quota_project_id", "provision_state", "restart_count", "last_health_ts",
+)
+
+
 def upsert_vps(vps: Dict[str, Any]) -> int:
     """
     Insert or update a single VPS row. Returns the row id.
@@ -1464,6 +1515,7 @@ def upsert_vps(vps: Dict[str, Any]) -> int:
 
         if row_id is not None:
             # Insert (new) or replace (id change) with the id we want.
+            # (Docker columns are patched in after the statement runs.)
             conn.execute(
                 """
                 INSERT INTO vps (
@@ -1511,11 +1563,18 @@ def upsert_vps(vps: Dict[str, Any]) -> int:
                     vps.get("root_password"),
                 ),
             )
+            docker_fields = {key: vps[key] for key in DOCKER_VPS_FIELDS if key in vps}
+            if docker_fields:
+                conn.execute(
+                    f"UPDATE vps SET {', '.join(f'{k} = ?' for k in docker_fields)}, "
+                    "last_modified = CURRENT_TIMESTAMP WHERE id = ?",
+                    (*docker_fields.values(), int(row_id)),
+                )
             return int(row_id)
 
         cur = conn.execute(
             """
-            INSERT INTO vps (
+            INSERT INTO vps (  # noqa: E501 — docker columns are patched in below
                 user_id, node_id, container_name, ram, cpu, storage, config, os_version,
                 status, suspended, whitelisted, is_public, created_at, shared_with,
                 suspension_history, expiration_date, root_password
@@ -1541,7 +1600,14 @@ def upsert_vps(vps: Dict[str, Any]) -> int:
                 vps.get("root_password"),
             ),
         )
-        return int(cur.lastrowid)
+        new_id = int(cur.lastrowid)
+
+    # Docker metadata lives in the columns added by the v11 migration; write
+    # them through patch_vps so the classic INSERT stays byte-identical to v10.
+    docker_fields = {key: vps[key] for key in DOCKER_VPS_FIELDS if key in vps}
+    if docker_fields:
+        patch_vps(container, **docker_fields)
+    return new_id
 
 
 def patch_vps(container_name: str, **fields: Any) -> bool:
@@ -1552,6 +1618,10 @@ def patch_vps(container_name: str, **fields: Any) -> bool:
         "user_id", "node_id", "ram", "cpu", "storage", "config", "os_version",
         "status", "suspended", "whitelisted", "is_public", "expiration_date",
         "root_password", "shared_with", "suspension_history", "created_at",
+        # ── v11 Docker metadata (see unixnodes/database/models.py) ──────────
+        "backend", "docker_container_id", "docker_image", "volume_name",
+        "ssh_host_port", "pid_limit", "quota_method", "quota_enforced",
+        "quota_project_id", "provision_state", "restart_count", "last_health_ts",
     }
     sets, params = [], []
     for key, value in fields.items():
@@ -1559,7 +1629,7 @@ def patch_vps(container_name: str, **fields: Any) -> bool:
             continue
         if key in ("shared_with", "suspension_history"):
             value = json.dumps(value or [])
-        if key in ("suspended", "whitelisted", "is_public"):
+        if key in ("suspended", "whitelisted", "is_public", "quota_enforced"):
             value = 1 if value else 0
         sets.append(f"{key} = ?")
         params.append(value)
@@ -1573,14 +1643,21 @@ def patch_vps(container_name: str, **fields: Any) -> bool:
 
 
 def delete_vps_row(container_name: str) -> None:
+    name = str(container_name)
     with db_conn(write=True) as conn:
-        conn.execute("DELETE FROM port_forwards WHERE vps_container = ?", (str(container_name),))
-        conn.execute("DELETE FROM usage_snapshots WHERE container = ?", (str(container_name),))
-        conn.execute("DELETE FROM vps WHERE container_name = ?", (str(container_name),))
+        conn.execute("DELETE FROM port_forwards WHERE vps_container = ?", (name,))
+        conn.execute("DELETE FROM usage_snapshots WHERE container = ?", (name,))
+        # v11 Docker ledger rows.  Port reservations are *released* (kept as
+        # history) rather than deleted, and backups stay until swept.
+        conn.execute(
+            "UPDATE docker_ports SET status = 'released', released_at = CURRENT_TIMESTAMP "
+            "WHERE container_name = ? AND status != 'released'", (name,))
+        conn.execute("DELETE FROM storage_quotas WHERE container_name = ?", (name,))
+        conn.execute("DELETE FROM vps WHERE container_name = ?", (name,))
 
 
 def get_all_containers_on_host() -> List[str]:
-    """Get all LXC container names currently tracked in bot database."""
+    """All container names currently tracked in the bot database."""
     rows = query_all("SELECT DISTINCT container_name FROM vps ORDER BY container_name")
     return [str(r["container_name"]) for r in rows]
 
@@ -1620,27 +1697,24 @@ def assign_container_to_user(container_name: str, user_id: int) -> bool:
         return False
 
 
-async def get_lxc_containers_on_node(node_id: int = 1) -> List[str]:
-    """Get list of LXC containers currently on a node (fast query)."""
+async def get_containers_on_node(node_id: int = 1) -> List[str]:
+    """
+    Container names present on a node, read live from the Docker Engine.
+
+    v11: replaces `lxc list --format=csv -c n`.  Only containers wearing the
+    platform's ownership label are returned, so unrelated containers on a shared
+    host never leak into VPS listings.
+    """
     try:
-        # Use CSV format for faster output: lxc list --format=csv -c n
-        output = await run_lxc_command("", "list --format=csv -c n", timeout=15, node_id=node_id)
-        lines = output.strip().split("\n")
-        # Skip header line and empty lines
-        containers = [line.strip() for line in lines if line.strip() and line.strip().lower() != "name"]
-        return containers
+        client = docker_client(node_id)
+        items = await run_blocking(unix_ctr.list_managed, client)
+        return [str(item["name"]) for item in items]
     except asyncio.TimeoutError:
-        logger.warning("LXC list timed out on node %s", node_id)
+        logger.warning("container list timed out on node %s", node_id)
         return []
     except Exception as exc:
-        logger.error("Failed to get LXC containers from node %s: %s", node_id, exc)
+        logger.error("Failed to list containers on node %s: %s", node_id, exc)
         return []
-
-
-def get_orphaned_containers() -> List[str]:
-    """Get LXC containers that exist but aren't tracked in bot database."""
-    # This would need to be called async, so we'll handle it in the command
-    pass
 
 
 def next_vps_id() -> int:
@@ -1706,8 +1780,21 @@ def get_user_allocation(user_id: Union[int, str]) -> int:
 
 
 def get_user_used_ports(user_id: Union[int, str]) -> int:
-    row = query_one("SELECT COUNT(*) AS c FROM port_forwards WHERE user_id = ?", (str(user_id),))
-    return int(row["c"]) if row else 0
+    """
+    Port slots in use by a user.
+
+    Counts live Docker reservations (``docker_ports``) and any pre-v11
+    ``port_forwards`` rows still in the database, so a user who had LXC-era
+    forwards cannot silently escape their quota.  Released reservations never
+    count, which is what makes the history table safe to keep growing.
+    """
+    uid = str(user_id)
+    row = query_one(
+        "SELECT COUNT(*) AS c FROM docker_ports "
+        "WHERE user_id = ? AND status != 'released'", (uid,))
+    used = int(row["c"]) if row else 0
+    legacy = query_one("SELECT COUNT(*) AS c FROM port_forwards WHERE user_id = ?", (uid,))
+    return used + (int(legacy["c"]) if legacy else 0)
 
 
 def allocate_ports(user_id: Union[int, str], amount: int) -> int:
@@ -1953,24 +2040,27 @@ def db_write_transaction():
         yield conn
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5. RUNTIME HELPERS  (LXC / Podman • host stats • networking)
+# 5. DOCKER RUNTIME LAYER  (containers • host stats • networking • ports)
 # ═══════════════════════════════════════════════════════════════════════════
 #
-#  Fixes vs v8.0:
-#   • All subprocess / HTTP calls run in worker threads → the Discord event
-#     loop can never stall (v8.0 blocked it and could trigger a reconnect).
-#   • Physical disk resize always targets the container's root *device*.
-#   • `top`-scraping replaced by cgroup v1/v2 reads (locale independent).
-#   • Multi-node fetch no longer spawns a thread per node on every render.
-#   • Fixed `stop {vps_id}` / `migrate {command}` f-strings that never worked.
+#  v11: the whole LXC/LXD backend is gone.  Every infrastructure call goes
+#  through the `unixnodes` package, which talks to the Docker Engine API.
 #
-#  Fixes vs v9.0:
-#   • `container_shell()` falls back to `sh` when the image has no bash
-#     (Alpine / busybox images previously failed every internal command).
-#   • `get_host_cpu_usage()` no longer returns a bogus 0.0 on the very first
-#     sample and no longer performs a pointless `dict.update({})`.
-#   • `get_host_disk_usage()` now also exposes a numeric percentage so the
-#     v10 host snapshots can graph disk usage.
+#  Rules kept from v10 (and extended):
+#   • Nothing blocking runs on the event loop — every Docker call is dispatched
+#     onto the bounded worker pool in `unixnodes.concurrency`.
+#   • Container state is always read live from the engine, never cached.
+#   • The persistent volume is never deleted unless an operation explicitly
+#     means "destroy the data" (delete / reinstall).
+#
+#  Semantic differences from LXC that callers must know about:
+#   • `lxc config set` after creation → Docker needs a container recreate.
+#     `apply_container_policy()` / `resize_vps()` do that, preserving the volume.
+#   • `lxc config device add … proxy` → Docker publishes ports at create time.
+#     Adding or removing a forward recreates the container (volume intact).
+#   • LXC snapshots → volume archives (see `!backup`).
+#   • LXC guests had systemd; Docker guests do not.  A POSIX supervisor runs as
+#     PID 1 and keeps sshd (and cron) alive.
 
 LOCAL_NODE_IDS: set = set()
 
@@ -1999,483 +2089,253 @@ def safe_iso_parse(value: Optional[str]) -> Optional[datetime]:
 
 
 async def run_blocking(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """Run a blocking callable in the default executor (keeps the loop free)."""
-    return await asyncio.to_thread(func, *args, **kwargs)
+    """Run a blocking callable on the bounded worker pool (loop stays free)."""
+    return await unix_run_in_thread(func, *args, **kwargs)
 
 
-def _local_lxc_binary() -> Optional[str]:
-    for candidate in ("lxc", "lxd", "podman"):
-        path = shutil.which(candidate)
-        if path:
-            return candidate
-    return None
+# ── 5.1 Docker node access ───────────────────────────────────────────────────
+
+def docker_node(node_id: Optional[int] = None) -> Dict[str, Any]:
+    """Resolve a node record, defaulting to the node a container lives on."""
+    if node_id:
+        node = INFRA.repo.get_node(int(node_id))
+        if node:
+            return node
+    node = INFRA.repo.get_local_node()
+    return node or {"id": 1, "name": "Local Node", "is_local": True,
+                    "transport": "local", "enabled": True}
 
 
-# ── 5.1 Local execution primitives ───────────────────────────────────────────
-
-def _run_local_sync(argv: Sequence[str], timeout: int) -> Tuple[int, str, str]:
-    try:
-        completed = subprocess.run(
-            list(argv),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-        return completed.returncode, completed.stdout or "", completed.stderr or ""
-    except subprocess.TimeoutExpired:
-        return 124, "", f"Command timed out after {timeout}s"
-    except FileNotFoundError:
-        return 127, "", f"Executable not found: {argv[0]}"
-    except Exception as exc:  # pragma: no cover
-        return 1, "", str(exc)
+def docker_client(node_id: Optional[int] = None) -> Any:
+    return unix_nodes_mod.client_for(docker_node(node_id))
 
 
-def _run_remote_sync(node: Dict[str, Any], command: str, timeout: int) -> Tuple[int, str, str]:
-    try:
-        response = requests.post(
-            f"{str(node['url']).rstrip('/')}/api/execute",
-            json={"command": command},
-            params={"api_key": node.get("api_key")},
-            timeout=timeout,
-        )
-    except requests.exceptions.ConnectionError:
-        return 1, "", f"Node '{node['name']}' is unreachable (network error)"
-    except requests.exceptions.Timeout:
-        return 124, "", f"Node '{node['name']}' timed out after {timeout}s"
-    except requests.exceptions.RequestException as exc:
-        return 1, "", f"Node '{node['name']}' request failed: {exc}"
-
-    if response.status_code == 401:
-        return 1, "", f"Node '{node['name']}' rejected the API key"
-    if response.status_code >= 400:
-        detail = response.text[:400]
-        try:
-            payload = response.json()
-            detail = payload.get("detail") or payload.get("error") or payload.get("stderr") or detail
-        except ValueError:
-            pass
-        return 1, "", f"Node '{node['name']}' returned HTTP {response.status_code}: {detail}"
-
-    try:
-        payload = response.json()
-    except ValueError:
-        return 1, response.text, "Node returned invalid JSON"
-
-    return int(payload.get("returncode", 0)), payload.get("stdout", ""), payload.get("stderr", "")
+def node_is_local(node_id: Optional[int] = None) -> bool:
+    return bool(docker_node(node_id).get("is_local"))
 
 
-async def run_lxc_command(container_name: str, command: str, *,
-                          timeout: int = LXC_TIMEOUT_DEFAULT,
-                          node_id: Optional[int] = None,
-                          check: bool = True) -> str:
-    """Execute an `lxc <command>` (container operations, host side)."""
-    if node_id is None:
-        node_id = find_node_id_for_container(container_name)
-    node = get_node(node_id)
-    if not node:
-        raise RuntimeError(f"Node {node_id} not found")
-
-    if node["is_local"]:
-        binary = _local_lxc_binary()
-        if not binary:
-            raise RuntimeError("LXC/LXD/Podman is not installed on this host")
-        argv = [binary, *shlex.split(command)]
-        code, out, err = await run_blocking(_run_local_sync, argv, timeout)
-    else:
-        code, out, err = await run_blocking(_run_remote_sync, node, f"lxc {command}", timeout)
-
-    if check and code != 0:
-        message = (err or out or "unknown error").strip()
-        raise RuntimeError(f"LXC command failed ({message.splitlines()[0][:300]})")
-    return (out or err or "").strip()
+def container_allocator(node_id: Optional[int] = None) -> Any:
+    node = docker_node(node_id)
+    return unix_ports_mod.PortAllocator(
+        INFRA.repo, int(node["id"]),
+        str(node.get("publish_ip") or unix_config.DOCKER_PUBLISH_IP))
 
 
-async def run_lxc_argv(container_name: str, argv: Sequence[str], *,
-                       timeout: int = LXC_TIMEOUT_DEFAULT,
-                       node_id: Optional[int] = None,
-                       check: bool = True) -> str:
-    """Same as run_lxc_command but argv-based (no shell quoting pitfalls)."""
-    return await run_lxc_command(container_name, " ".join(shlex.quote(str(a)) for a in argv),
-                                 timeout=timeout, node_id=node_id, check=check)
+def is_docker_vps(container_name: str) -> bool:
+    """True when a record is managed by the Docker backend (not an LXC legacy)."""
+    vps = INFRA.repo.get_vps_by_container(container_name)
+    if not vps:
+        return True   # untracked container: the engine still owns the name
+    return str(vps.get("backend") or "docker") == "docker"
 
 
-# Small internal cache of "does this container have bash?" lookups so we do not
-# probe on every single command (Alpine images have no bash at all).
-_SHELL_CACHE: Dict[str, str] = {}
-_SHELL_CACHE_LOCK = threading.Lock()
-
-
-async def _detect_container_shell(container_name: str, node_id: Optional[int]) -> str:
-    with _SHELL_CACHE_LOCK:
-        cached = _SHELL_CACHE.get(container_name)
-    if cached:
-        return cached
-    detected = "bash"
-    try:
-        binary = _local_lxc_binary() or "lxc"
-        node = get_node(node_id) if node_id else None
-        probe = "command -v bash || command -v sh || echo sh"
-        if node and not node["is_local"]:
-            # Remote nodes must probe the guest too; assuming bash breaks Alpine/BusyBox.
-            out = await run_lxc_command(
-                container_name,
-                f"exec {shlex.quote(container_name)} -- sh -c {shlex.quote(probe)}",
-                timeout=20, node_id=node_id,
-            )
-            text = (out or "").strip().splitlines()
-            if text:
-                detected = "bash" if "bash" in text[-1] else "sh"
-        else:
-            code, out, _err = await run_blocking(
-                _run_local_sync,
-                [binary, "exec", container_name, "--", "sh", "-c", probe],
-                20,
-            )
-            text = (out or "").strip().splitlines()
-            if code == 0 and text:
-                detected = "bash" if "bash" in text[-1] else "sh"
-    except Exception:
-        detected = "bash"
-    with _SHELL_CACHE_LOCK:
-        _SHELL_CACHE[container_name] = detected
-    return detected
-
-
-async def container_shell(container_name: str, script: str, *,
-                          timeout: int = 120, node_id: Optional[int] = None,
-                          user: str = "root") -> str:
-    """
-    Run a shell script *inside* a container.
-
-    The script is base64-encoded and piped into the shell, which removes every
-    quoting/escaping bug that plagued the old inline `bash -c "..."` calls.
-
-    v10: the interpreter is detected once per container, so Alpine/busybox
-    images (no bash) now work instead of failing every internal command.
-    """
-    import base64
-
-    encoded = base64.b64encode(script.encode("utf-8")).decode("ascii")
-    if node_id is None:
-        node_id = find_node_id_for_container(container_name)
-    node = get_node(node_id)
-    if not node:
-        raise RuntimeError(f"Node {node_id} not found")
-
-    binary = _local_lxc_binary() or "lxc"
-    shell = await _detect_container_shell(container_name, node_id)
-    # `sh` has no `set -o pipefail`; only bash supports -l/-c combos we rely on.
-    inner = f"echo {encoded} | base64 -d | {shell}"
-
-    if node["is_local"]:
-        argv = [binary, "exec", container_name, "--", "sh", "-c", inner]
-        if user and user != "root":
-            argv = [binary, "exec", container_name, "--user", str(user), "--", "sh", "-c", inner]
-        code, out, err = await run_blocking(_run_local_sync, argv, timeout)
-    else:
-        remote_cmd = f"lxc exec {shlex.quote(container_name)} -- sh -c {shlex.quote(inner)}"
-        code, out, err = await run_blocking(_run_remote_sync, node, remote_cmd, timeout)
-
-    if code != 0 and not out:
-        raise RuntimeError((err or "container command failed").strip()[:300])
-    return (out or err or "").strip()
-
-
-# Backwards-compatible name used throughout the original codebase.
-async def execute_lxc(container_name: str, command: str, timeout: int = 120,
-                      node_id: Optional[int] = None):
-    return await run_lxc_command(container_name, command, timeout=timeout, node_id=node_id)
+def legacy_record_message(container_name: str) -> str:
+    return (f"`{container_name}` is a **legacy LXC/LXD record** and is not managed by the "
+            "Docker backend. Verify the real infrastructure and re-create it as a Docker VPS "
+            f"(see `MIGRATION.md`), or run `{PREFIX}docker-adopt {container_name}` once the "
+            "container genuinely exists on Docker.")
 
 
 # ── 5.2 Container lifecycle helpers ──────────────────────────────────────────
 
 async def container_state(container_name: str, node_id: Optional[int] = None) -> str:
-    """Authoritative running/stopped state straight from LXC (never cached)."""
+    """
+    Authoritative container state, straight from the engine (never cached).
+
+    Returns ``running`` / ``stopped`` / ``paused`` / ``created`` / ``missing``.
+    """
     try:
-        output = await run_lxc_command(container_name, f"info {shlex.quote(container_name)}",
-                                       timeout=25, node_id=node_id)
-    except Exception:
-        return "unknown"
-    match = re.search(r"^Status:\s*(.+)$", output, re.MULTILINE)
-    if not match:
-        return "unknown"
-    state = match.group(1).strip().lower()
-    if "running" in state:
-        return "running"
-    if "stopped" in state:
-        return "stopped"
-    if "frozen" in state:
-        return "frozen"
-    return state
-
-
-async def apply_lxc_config(container_name: str, node_id: int) -> bool:
-    """Grant the privileges needed for Docker-in-LXC and nested workloads."""
-    settings = (
-        ("security.nesting", "true"),
-        ("security.privileged", "true"),
-        ("security.syscalls.intercept.mknod", "true"),
-        ("security.syscalls.intercept.setxattr", "true"),
-        ("linux.kernel_modules", "overlay,loop,nf_nat,ip_tables,ip6_tables,netlink_diag,br_netfilter"),
-    )
-    ok = True
-    for key, value in settings:
-        try:
-            await run_lxc_argv(container_name, ["config", "set", container_name, key, value],
-                               timeout=40, node_id=node_id)
-        except Exception as exc:
-            ok = False
-            logger.warning("config set %s on %s failed: %s", key, container_name, exc)
-
-    try:
-        await run_lxc_argv(container_name, ["config", "device", "add", container_name,
-                                            "fuse", "unix-char", "path=/dev/fuse"],
-                           timeout=30, node_id=node_id)
-    except Exception:
-        logger.debug("FUSE device already present on %s", container_name)
-
-    raw_lxc = (
-        "lxc.apparmor.profile = unconfined\n"
-        "lxc.apparmor.allow_nesting = 1\n"
-        "lxc.apparmor.allow_incomplete = 1\n"
-        "lxc.cap.drop =\n"
-        "lxc.cgroup.devices.allow = a\n"
-        "lxc.cgroup2.devices.allow = a\n"
-        "lxc.mount.auto = proc:rw sys:rw cgroup:rw shmounts:rw\n"
-        "lxc.mount.entry = /dev/fuse dev/fuse none bind,create=file 0 0\n"
-    )
-    try:
-        await run_lxc_command(
-            container_name,
-            f"config set {shlex.quote(container_name)} raw.lxc {shlex.quote(raw_lxc)}",
-            timeout=40, node_id=node_id,
-        )
+        client = docker_client(node_id)
+        return await run_blocking(unix_ctr.simple_state, client, container_name)
     except Exception as exc:
-        ok = False
-        logger.warning("raw.lxc set failed on %s: %s", container_name, exc)
-    return ok
+        logger.debug("container_state(%s) failed: %s", container_name, exc)
+        return "unknown"
+
+
+async def container_exists(container_name: str, node_id: Optional[int] = None) -> bool:
+    try:
+        client = docker_client(node_id)
+        return await run_blocking(unix_ctr.exists, client, container_name)
+    except Exception:
+        return False
+
+
+async def docker_start(container_name: str, node_id: Optional[int] = None,
+                       *, timeout: Optional[int] = None) -> None:
+    client = docker_client(node_id)
+    await run_blocking(unix_ctr.start, client, container_name, timeout=timeout)
+
+
+async def docker_stop(container_name: str, node_id: Optional[int] = None,
+                      *, timeout: Optional[int] = None, force: bool = False) -> None:
+    client = docker_client(node_id)
+    await run_blocking(unix_ctr.stop, client, container_name, timeout=timeout, force=force)
+
+
+async def docker_restart(container_name: str, node_id: Optional[int] = None) -> None:
+    client = docker_client(node_id)
+    await run_blocking(unix_ctr.restart, client, container_name)
+
+
+async def docker_remove(container_name: str, node_id: Optional[int] = None, *,
+                        volumes: bool = False, force: bool = True) -> bool:
+    client = docker_client(node_id)
+    return await run_blocking(unix_ctr.remove, client, container_name,
+                              volumes=volumes, force=force)
+
+
+async def docker_logs(container_name: str, node_id: Optional[int] = None,
+                      tail: int = 60) -> str:
+    client = docker_client(node_id)
+    return await run_blocking(unix_ctr.logs, client, container_name, tail)
+
+
+async def docker_inspect(container_name: str, node_id: Optional[int] = None) -> Dict[str, Any]:
+    client = docker_client(node_id)
+    return await run_blocking(unix_ctr.summary, client, container_name)
+
+
+async def get_containers_on_node(node_id: Optional[int] = None) -> List[str]:
+    """Managed container names on a node (the `!lxc-list` data source)."""
+    try:
+        client = docker_client(node_id)
+        items = await run_blocking(unix_ctr.list_managed, client)
+        return [str(item["name"]) for item in items]
+    except Exception as exc:
+        logger.warning("could not list containers on node %s: %s", node_id, exc)
+        return []
+
+
+async def get_orphaned_containers(node_id: Optional[int] = None) -> List[str]:
+    """Containers present on the engine but missing from the database."""
+    try:
+        found = await run_blocking(unix_lifecycle.orphans, INFRA.repo, node_id)
+    except Exception as exc:
+        logger.debug("orphan scan failed: %s", exc)
+        return []
+    names: List[str] = []
+    for items in found.values():
+        names.extend(str(item["name"]) for item in items)
+    return names
+
+
+# ── 5.3 Executing inside a container ────────────────────────────────────────
+
+async def container_shell(container_name: str, script: str, *,
+                          timeout: int = 120, node_id: Optional[int] = None,
+                          user: str = "root") -> str:
+    """
+    Run a shell script *inside* a container via the Docker exec API.
+
+    The script is base64-encoded and piped into the detected interpreter, which
+    removes every quoting bug and works on bash and busybox `sh`.
+    """
+    client = docker_client(node_id)
+    return await run_blocking(unix_ctr.exec_script, client, container_name, script,
+                              user=user, timeout=timeout)
+
+
+async def container_exec(container_name: str, command: str, *, timeout: int = 120,
+                         node_id: Optional[int] = None) -> Tuple[int, str, str]:
+    """Run one command line inside the container; returns (code, stdout, stderr)."""
+    client = docker_client(node_id)
+    return await run_blocking(unix_ctr.exec_argv, client, container_name,
+                              ["sh", "-c", command], timeout=timeout)
+
+
+# Backwards-compatible name kept for any custom code that imported it.
+async def execute_command(container_name: str, command: str, timeout: int = 120,
+                          node_id: Optional[int] = None) -> str:
+    _code, out, err = await container_exec(container_name, command, timeout=timeout,
+                                           node_id=node_id)
+    return (out or err or "").strip()
+
+
+# ── 5.4 Container policy / guest hardening ──────────────────────────────────
+
+async def apply_container_policy(container_name: str, node_id: int) -> bool:
+    """
+    Re-apply the platform security policy to a container.
+
+    Docker fixes capabilities, PID limits, sysctls and published ports at
+    creation time, so "re-applying" means recreating the container from the
+    same image and the **same persistent volume** — customer data is untouched.
+    """
+    vps = INFRA.repo.get_vps_by_container(container_name)
+    if not vps:
+        raise RuntimeError(f"No VPS record for {container_name}")
+    result = await run_blocking(unix_lifecycle.recreate, INFRA.repo, vps)
+    return bool(result.get("running"))
 
 
 async def apply_internal_permissions(container_name: str, node_id: int) -> None:
-    """Kernel tweaks inside the guest: unprivileged ports, inotify, userns."""
-    script = """
-set -e
-mkdir -p /etc/sysctl.d
-cat > /etc/sysctl.d/99-unixnodes.conf <<'EOF'
-net.ipv4.ip_unprivileged_port_start=0
-net.ipv4.ping_group_range=0 2147483647
-fs.inotify.max_user_watches=524288
-fs.inotify.max_user_instances=1024
-kernel.unprivileged_userns_clone=1
-EOF
-sysctl -p /etc/sysctl.d/99-unixnodes.conf >/dev/null 2>&1 || true
+    """
+    Make sure the guest is actually usable.
 
-# Make sure ssh is reachable and has a host key.
-if command -v ssh-keygen >/dev/null 2>&1; then
-  mkdir -p /run/sshd /etc/ssh
-  [ -f /etc/ssh/ssh_host_rsa_key ] || ssh-keygen -A >/dev/null 2>&1 || true
-fi
-systemctl enable ssh >/dev/null 2>&1 || systemctl enable sshd >/dev/null 2>&1 || true
-systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1 \
-  || service ssh restart >/dev/null 2>&1 || service sshd restart >/dev/null 2>&1 || true
-exit 0
+    The namespaced sysctls (unprivileged ports, ping, port range) are applied by
+    Docker at *creation* time — an unprivileged container has a read-only
+    /proc/sys, so they cannot be written from inside.  This pass therefore just
+    verifies sshd, cron and the state directory.
+    """
+    script = """
+mkdir -p /etc/unixnodes /run/sshd /var/run/sshd 2>/dev/null || true
+if command -v cron >/dev/null 2>&1 && ! pgrep -x cron >/dev/null 2>&1; then cron 2>/dev/null || true; fi
+if command -v crond >/dev/null 2>&1 && ! pgrep -x crond >/dev/null 2>&1; then crond -b 2>/dev/null || true; fi
+echo GUEST_OK
 """
     try:
-        await container_shell(container_name, script, timeout=120, node_id=node_id)
+        await container_shell(container_name, script, timeout=60, node_id=node_id)
     except Exception as exc:
-        logger.warning("Internal permission pass failed on %s: %s", container_name, exc)
+        logger.debug("guest hardening pass failed on %s: %s", container_name, exc)
 
 
-async def configure_ssh(container_name: str, node_id: int, password: str) -> Tuple[bool, str]:
-    """Install and verify SSH in a running LXD/LXC guest across supported OSes.
-
-    Uses POSIX shell syntax so Alpine/BusyBox images do not depend on bash.
-    A failed install/configuration is reported to the caller instead of silently
-    handing out credentials for a VPS that cannot accept SSH connections.
+async def configure_ssh(container_name: str, node_id: int,
+                        password: Optional[str] = None) -> Tuple[bool, str]:
     """
-    import base64
+    Make sure SSH works on a container, optionally rotating the root password.
 
-    with _SHELL_CACHE_LOCK:
-        _SHELL_CACHE.pop(container_name, None)
-
-    state = await container_state(container_name, node_id)
+    Returns ``(ok, message)`` — a failure is reported to the caller instead of
+    silently handing out credentials for a VPS that cannot be reached.
+    """
+    client = docker_client(node_id)
+    state = await run_blocking(unix_ctr.simple_state, client, container_name)
+    if state == "missing":
+        return False, "Container does not exist on its node"
     if state != "running":
         try:
-            await run_lxc_argv(container_name, ["start", container_name], timeout=180, node_id=node_id)
+            await run_blocking(unix_ctr.start, client, container_name)
         except Exception as exc:
             return False, f"Container is not running and could not be started: {exc}"
         for _ in range(20):
             await asyncio.sleep(1)
-            if await container_state(container_name, node_id) == "running":
+            if await run_blocking(unix_ctr.simple_state, client, container_name) == "running":
                 break
         else:
-            return False, "Container did not reach running state"
+            return False, "Container did not reach the running state"
 
-    encoded_password = base64.b64encode(f"root:{password}".encode("utf-8")).decode("ascii")
-    script = r"""
-set -u
-export DEBIAN_FRONTEND=noninteractive
+    if password:
+        ok, note = await run_blocking(unix_ssh.set_root_password, client, container_name, password)
+        if not ok:
+            return False, note
+    ok, note = await run_blocking(unix_ssh.ensure_ssh_running, client, container_name)
+    if not ok:
+        logs = await run_blocking(unix_ctr.logs, client, container_name, 30)
+        return False, f"{note}\n\n{logs[-500:]}"
+    if not await run_blocking(unix_ssh.wait_ready, client, container_name):
+        return False, "sshd is installed but is not listening on port 22"
+    logger.info("SSH ready for %s on node %s", container_name, node_id)
+    return True, "SSH verified inside the container"
 
-# Create SSH directories with proper permissions
-mkdir -p /run/sshd /var/run/sshd /var/empty /etc/ssh
-chmod 0755 /run/sshd /var/run/sshd /etc/ssh 2>/dev/null || true
 
-# Ensure privilege separation directory exists
-mkdir -p /run/sshd
-chmod 0700 /run/sshd
+async def verify_ssh_access(container_name: str, host_port: int, password: str,
+                            node_id: Optional[int] = None) -> Tuple[bool, str]:
+    """Verify the published SSH port really answers, from the node's point of view."""
+    node = docker_node(node_id)
+    host = unix_provisioning.verification_host(node, unix_config.DOCKER_PUBLISH_IP)
+    return await run_blocking(unix_ssh.verify_access, host, int(host_port), password)
 
-if ! command -v sshd >/dev/null 2>&1; then
-  if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -qq >/tmp/ssh-install.log 2>&1 && apt-get install -y openssh-server >>/tmp/ssh-install.log 2>&1
-  elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache openssh >/tmp/ssh-install.log 2>&1
-  elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y openssh-server openssh-clients >/tmp/ssh-install.log 2>&1
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y openssh-server openssh-clients >/tmp/ssh-install.log 2>&1
-  elif command -v pacman >/dev/null 2>&1; then
-    pacman -Sy --noconfirm openssh >/tmp/ssh-install.log 2>&1
-  else
-    echo SSH_ERROR: unsupported-package-manager
-    exit 0
-  fi
-fi
 
-if ! command -v sshd >/dev/null 2>&1; then
-  echo SSH_ERROR: openssh-server-install-failed
-  tail -n 12 /tmp/ssh-install.log 2>/dev/null || true
-  exit 0
-fi
-command -v chpasswd >/dev/null 2>&1 || { echo SSH_ERROR: chpasswd-missing; exit 0; }
-command -v ssh-keygen >/dev/null 2>&1 || { echo SSH_ERROR: ssh-keygen-missing; exit 0; }
-
-# Backup original config if it exists
-[ -f /etc/ssh/sshd_config.backup ] || cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup 2>/dev/null || true
-
-# Create optimized sshd_config for LXC containers
-cat > /etc/ssh/sshd_config <<'EOF_SSH_CONFIG'
-# This is the ssh server system-wide configuration file for LXC containers
-
-Port 22
-AddressFamily any
-ListenAddress 0.0.0.0
-ListenAddress ::
-
-# Authentication
-PasswordAuthentication yes
-PubkeyAuthentication yes
-PermitRootLogin yes
-PermitEmptyPasswords no
-
-# Security
-ChallengeResponseAuthentication no
-UsePAM yes
-
-# Connection settings
-TCPKeepAlive yes
-ClientAliveInterval 60
-ClientAliveCountMax 3
-MaxAuthTries 6
-MaxSessions 10
-
-# Logging
-LogLevel INFO
-SyslogFacility AUTH
-
-# X11
-X11Forwarding no
-PrintMotd no
-PrintLastLog yes
-
-# Environment
-PermitUserEnvironment no
-
-# SFTP
-Subsystem sftp /usr/lib/openssh/sftp-server
-
-# Privilege Separation
-UsePrivilegeSeparation sandbox
-EOF_SSH_CONFIG
-
-chmod 600 /etc/ssh/sshd_config
-
-# Generate missing host keys
-ssh-keygen -A >/tmp/ssh-keygen.log 2>&1 || true
-
-# Verify host keys exist
-if [ ! -s /etc/ssh/ssh_host_ed25519_key ] && [ ! -s /etc/ssh/ssh_host_rsa_key ]; then
-  ssh-keygen -t rsa -b 2048 -N '' -f /etc/ssh/ssh_host_rsa_key >/tmp/ssh-keygen.log 2>&1 || {
-    echo SSH_ERROR: host-key-generation-failed; cat /tmp/ssh-keygen.log 2>/dev/null; exit 0;
-  }
-fi
-
-# Set root password
-printf '%s' 'PASSWORD_B64_PLACEHOLDER' | base64 -d | chpasswd 2>/tmp/ssh-password.log || {
-  echo SSH_ERROR: root-password-update-failed; cat /tmp/ssh-password.log 2>/dev/null; exit 0;
-}
-
-# Ensure /run/sshd exists and has correct permissions
-mkdir -p /run/sshd
-chmod 0700 /run/sshd
-
-# Test sshd configuration
-if ! sshd -t -f /etc/ssh/sshd_config 2>/tmp/sshd-config.log; then
-  echo SSH_ERROR: invalid-sshd-config; cat /tmp/sshd-config.log 2>/dev/null; exit 0
-fi
-
-# Kill any existing sshd processes
-if command -v pkill >/dev/null 2>&1; then pkill -9 -x sshd 2>/dev/null || true; fi
-sleep 1
-
-# Start SSH daemon with absolute path
-SSHD_PATH=$(command -v sshd)
-"$SSHD_PATH" -f /etc/ssh/sshd_config >/tmp/sshd.log 2>&1
-SSHD_START_RC=$?
-
-if [ "$SSHD_START_RC" -ne 0 ]; then
-  echo SSH_ERROR: sshd-start-failed; cat /tmp/sshd.log 2>/dev/null; exit 0
-fi
-
-# Wait for sshd to bind to port 22
-attempt=0
-while [ "$attempt" -lt 15 ]; do
-  if command -v ss >/dev/null 2>&1; then
-    ss -lnt 2>/dev/null | grep -Eq '(^|[[:space:]])(0\.0\.0\.0|\*|\[::\]|::):22([[:space:]]|$)' && { echo SSH_SETUP_OK; exit 0; }
-  elif command -v netstat >/dev/null 2>&1; then
-    netstat -lnt 2>/dev/null | grep -q ':22[[:space:]]' && { echo SSH_SETUP_OK; exit 0; }
-  fi
-  
-  # Check if sshd is still running
-  if command -v pgrep >/dev/null 2>&1 && ! pgrep -x sshd >/dev/null 2>&1; then
-    echo SSH_ERROR: sshd-exited; tail -n 10 /tmp/sshd.log 2>/dev/null || true; exit 0
-  fi
-  
-  attempt=$((attempt + 1))
-  sleep 1
-done
-
-# Final check - if ss/netstat not available, assume success if sshd is running
-if command -v pgrep >/dev/null 2>&1; then
-  pgrep -x sshd >/dev/null 2>&1 && echo SSH_SETUP_OK || echo SSH_ERROR: sshd-not-running
-else
-  echo SSH_SETUP_OK
-fi
-"""
-    script = script.replace("PASSWORD_B64_PLACEHOLDER", encoded_password)
-    try:
-        output = await container_shell(container_name, script, timeout=300, node_id=node_id)
-        if "SSH_SETUP_OK" in output:
-            logger.info("SSH ready for %s on node %s", container_name, node_id)
-            return True, "SSH installed, password set, config validated, and daemon started"
-        detail = output[-900:] if output else "No diagnostic output from container"
-        logger.error("SSH setup failed for %s: %s", container_name, detail)
-        return False, detail
-    except Exception as exc:
-        logger.error("configure_ssh failed on %s: %s", container_name, exc, exc_info=True)
-        return False, str(exc)
-
-# ── 5.3 Password vault (portable encryption, no hard dependency) ─────────────
+# ── 5.5 Password vault (portable encryption, no hard dependency) ─────────────
 
 SECRET_KEY_FILE = BASE_DIR / ".secret_key"
 try:  # optional, gives us real authenticated encryption when available
@@ -2559,137 +2419,58 @@ def decrypt_secret(blob: Optional[str]) -> Optional[str]:
         return None
 
 
-def generate_strong_password(length: int = 16) -> str:
-    if length < 12:
-        length = 12
-    alphabet = string.ascii_letters + string.digits + "!@#%^*-_=+"
-    while True:
-        candidate = "".join(secrets.choice(alphabet) for _ in range(length))
-        if (re.search(r"[a-z]", candidate) and re.search(r"[A-Z]", candidate)
-                and re.search(r"\d", candidate) and re.search(r"[^A-Za-z0-9]", candidate)):
-            return candidate
+def generate_strong_password(length: int = 20) -> str:
+    """Cryptographically random password covering every character class."""
+    return unix_provisioning.generate_password(length)
 
 
 def get_vps_password(container_name: str) -> Optional[str]:
-    vps = get_vps_by_container(container_name)
+    vps = INFRA.repo.get_vps_by_container(container_name)
     return decrypt_secret(vps.get("root_password")) if vps else None
 
 
 def set_vps_password(container_name: str, password: str) -> bool:
-    return patch_vps(container_name, root_password=encrypt_secret(password))
+    return INFRA.repo.patch_vps(container_name, root_password=encrypt_secret(password))
 
 
-# ── 5.4 Host statistics ──────────────────────────────────────────────────────
+# The Docker services generate root passwords but never see the encryption key,
+# so hand them the vault once.  Every operation that mints a password
+# (provision / reinstall / rebuild / clone / migrate / password change) then
+# stores the *encrypted* value itself — no call site can forget, and the
+# plaintext never reaches the database, `docker inspect` or a log line.
+INFRA.set_vault(encrypt_secret)
 
-_CPU_SAMPLE_LOCK = threading.Lock()
-_last_cpu_sample: Dict[str, Any] = {"idle": None, "total": None, "ts": 0.0}
 
+# ── 5.6 Host statistics ─────────────────────────────────────────────────────
 
-def _cpu_times() -> Optional[Tuple[int, int]]:
+async def get_host_stats(node_id: int) -> Dict[str, Any]:
+    """CPU / RAM / disk of the machine hosting the bot (never container numbers)."""
     try:
-        with open("/proc/stat", "r", encoding="utf-8") as handle:
-            fields = [float(x) for x in handle.readline().split()[1:]]
-        idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
-        return int(idle), int(sum(fields))
-    except Exception:
-        return None
+        snapshot = await run_blocking(unix_monitoring.host_snapshot, None)
+        return {**snapshot, "online": True}
+    except Exception as exc:
+        logger.debug("host stats failed: %s", exc)
+        return {"cpu": 0.0, "ram": 0.0, "disk": "Unknown", "disk_pct": 0.0, "online": False}
 
 
 def get_host_cpu_usage() -> float:
-    """
-    Non-blocking CPU usage from /proc/stat, with a psutil fallback.
-
-    v10 fix: the previous version stored the sample and then returned 0.0 on
-    the *first* call forever after a restart (it also ran a no-op
-    `dict.update({})`). Now the first call sleeps once and produces a real
-    delta, so the animated panels show a true value immediately.
-    """
-    sample = _cpu_times()
-    if sample:
-        idle, total = sample
-        with _CPU_SAMPLE_LOCK:
-            prev_idle = _last_cpu_sample.get("idle")
-            prev_total = _last_cpu_sample.get("total")
-            _last_cpu_sample["idle"] = idle
-            _last_cpu_sample["total"] = total
-            _last_cpu_sample["ts"] = time.time()
-
-        if prev_idle is None or prev_total is None:
-            # First observation of this process: take a second sample.
-            time.sleep(0.2)
-            second = _cpu_times()
-            if not second:
-                return 0.0
-            idle2, total2 = second
-            with _CPU_SAMPLE_LOCK:
-                _last_cpu_sample["idle"] = idle2
-                _last_cpu_sample["total"] = total2
-            delta_total = total2 - total
-            delta_idle = idle2 - idle
-            if delta_total <= 0:
-                return 0.0
-            return max(0.0, min(100.0, 100.0 * (delta_total - delta_idle) / delta_total))
-
-        delta_total = total - prev_total
-        delta_idle = idle - prev_idle
-        if delta_total <= 0:
-            return 0.0
-        return max(0.0, min(100.0, 100.0 * (delta_total - delta_idle) / delta_total))
-    try:
-        import psutil  # type: ignore
-
-        return float(psutil.cpu_percent(interval=0.2))
-    except Exception:
-        return 0.0
+    return unix_monitoring.host_cpu_percent()
 
 
 def get_host_ram_usage() -> float:
-    try:
-        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
-            info = {}
-            for line in handle:
-                key, _, value = line.partition(":")
-                info[key.strip()] = float(value.strip().split()[0])
-        total = info.get("MemTotal", 0.0)
-        available = info.get("MemAvailable", info.get("MemFree", 0.0))
-        if total > 0:
-            return max(0.0, min(100.0, (total - available) / total * 100.0))
-    except Exception:
-        pass
-    try:
-        import psutil  # type: ignore
-
-        return float(psutil.virtual_memory().percent)
-    except Exception:
-        return 0.0
+    return unix_monitoring.host_ram_percent()
 
 
 def get_host_disk_usage() -> str:
-    try:
-        total, used, free = shutil.disk_usage("/")
-        pct = (used / total * 100) if total else 0.0
-        return f"{fmt_bytes(used)} / {fmt_bytes(total)} ({pct:.0f}%)"
-    except Exception:
-        return "Unknown"
+    return str(unix_monitoring.host_disk("/").get("text") or "Unknown")
 
 
 def get_host_disk_percent() -> float:
-    """Numeric disk usage (v10: used by host snapshots + animated bars)."""
-    try:
-        total, used, _free = shutil.disk_usage("/")
-        if total:
-            return max(0.0, min(100.0, used / total * 100.0))
-    except Exception:
-        pass
-    return 0.0
+    return float(unix_monitoring.host_disk("/").get("percent") or 0.0)
 
 
 def get_host_uptime_seconds() -> float:
-    try:
-        with open("/proc/uptime", "r", encoding="utf-8") as handle:
-            return float(handle.readline().split()[0])
-    except Exception:
-        return 0.0
+    return unix_monitoring.host_uptime_seconds()
 
 
 def get_load_average() -> Optional[Tuple[float, float, float]]:
@@ -2699,380 +2480,232 @@ def get_load_average() -> Optional[Tuple[float, float, float]]:
         return None
 
 
-async def get_host_stats(node_id: int) -> Dict[str, Any]:
-    node = get_node(node_id)
-    if not node:
-        return {"cpu": 0.0, "ram": 0.0, "disk": "Unknown", "disk_pct": 0.0, "online": False}
-
-    if node["is_local"]:
-        cpu, ram, disk, disk_pct = await asyncio.gather(
-            run_blocking(get_host_cpu_usage),
-            run_blocking(get_host_ram_usage),
-            run_blocking(get_host_disk_usage),
-            run_blocking(get_host_disk_percent),
-        )
-        return {"cpu": cpu, "ram": ram, "disk": disk, "disk_pct": disk_pct, "online": True}
-
-    def _fetch() -> Dict[str, Any]:
-        try:
-            response = requests.get(
-                f"{str(node['url']).rstrip('/')}/api/get_host_stats",
-                params={"api_key": node.get("api_key")},
-                timeout=8,
-            )
-            response.raise_for_status()
-            payload = response.json()
-            payload.setdefault("disk", "Unknown")
-            payload.setdefault("disk_pct", 0.0)
-            payload["online"] = True
-            return payload
-        except Exception as exc:
-            logger.debug("Remote stats failed for %s: %s", node["name"], exc)
-            return {"cpu": 0.0, "ram": 0.0, "disk": "Unknown", "disk_pct": 0.0, "online": False}
-
-    return await run_blocking(_fetch)
-
-
 async def get_node_status(node_id: int) -> Tuple[str, bool]:
-    node = get_node(node_id)
+    """Node reachability label for the panels."""
+    node = await run_blocking(INFRA.repo.get_node, int(node_id))
     if not node:
         return "❔ Unknown", False
-    if node["is_local"]:
-        return "🟢 Online (local)", True
-
-    def _ping() -> bool:
-        try:
-            response = requests.get(
-                f"{str(node['url']).rstrip('/')}/api/ping",
-                params={"api_key": node.get("api_key")},
-                timeout=5,
-            )
-            return response.status_code == 200
-        except Exception:
-            return False
-
-    online = await run_blocking(_ping)
-    return ("🟢 Online" if online else "🔴 Unreachable"), online
-
-# ── 5.5 Container statistics (cgroup based — no `top` parsing bugs) ──────────
-
-_CT_STAT_SCRIPT = r"""
-mem_used=""; mem_total=""; cpu_pct=""
-
-if [ -r /sys/fs/cgroup/memory.current ]; then
-  mem_used=$(cat /sys/fs/cgroup/memory.current 2>/dev/null)
-  mem_max=$(cat /sys/fs/cgroup/memory.max 2>/dev/null)
-  case "$mem_max" in ''|max) mem_max=$(( $(getconf _PHYS_PAGES) * $(getconf PAGE_SIZE) ));; esac
-  if [ -r /sys/fs/cgroup/memory.stat ]; then
-    inactive=$(awk '/^inactive_file /{print $2}' /sys/fs/cgroup/memory.stat 2>/dev/null)
-    [ -n "$inactive" ] && mem_used=$(( mem_used - inactive ))
-  fi
-  mem_total=$mem_max
-else
-  if [ -r /sys/fs/cgroup/memory/memory.stat ]; then
-    mem_used=$(awk '/^total_rss /{print $2}' /sys/fs/cgroup/memory/memory.stat 2>/dev/null)
-    inactive=$(awk '/^total_inactive_file /{print $2}' /sys/fs/cgroup/memory/memory.stat 2>/dev/null)
-    [ -n "$inactive" ] && mem_used=$(( mem_used - inactive ))
-  fi
-  limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null)
-  mem_total=$limit
-fi
-[ -z "$mem_used" ] && mem_used=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{print (t-a)*1024}' /proc/meminfo 2>/dev/null)
-[ -z "$mem_total" ] && mem_total=$(awk '/^MemTotal:/{print $2*1024}' /proc/meminfo 2>/dev/null)
-
-read u1 n1 s1 i1 w1 irq1 sirq1 st1 rest < /proc/stat
-sleep 1
-read u2 n2 s2 i2 w2 irq2 sirq2 st2 rest < /proc/stat
-d_idle=$(( (i2 + w2) - (i1 + w1) ))
-d_total=$(( (u2+n2+s2+i2+w2+irq2+sirq2+st2) - (u1+n1+s1+i1+w1+irq1+sirq1+st1) ))
-if [ "$d_total" -gt 0 ]; then
-  cpu_pct=$(( (100 * (d_total - d_idle) + d_total/2 ) / d_total ))
-fi
-
-uptime_secs=$(cut -d' ' -f1 /proc/uptime 2>/dev/null | cut -d. -f1)
-
-echo "MEM_USED=$mem_used"
-echo "MEM_TOTAL=$mem_total"
-echo "CPU_PCT=$cpu_pct"
-echo "UPTIME=$uptime_secs"
-"""
-
-
-def _read_remote_container_stats(node: Dict[str, Any], container: str) -> Dict[str, Any]:
     try:
-        response = requests.post(
-            f"{str(node['url']).rstrip('/')}/api/get_container_stats",
-            json={"container": container},
-            params={"api_key": node.get("api_key")},
-            timeout=10,
-        )
-        response.raise_for_status()
-        return response.json()
+        report = await run_blocking(unix_nodes_mod.health, node)
     except Exception as exc:
-        logger.debug("Remote container stats failed (%s/%s): %s", node["name"], container, exc)
-        return {}
+        return f"🔴 Unreachable ({str(exc)[:40]})", False
+    return str(report.get("label") or "❔ Unknown"), bool(report.get("online"))
 
+
+async def get_node_docker_status(node_id: int) -> Dict[str, Any]:
+    """Deep node status: engine version, capacity, containers, quota support."""
+    node = await run_blocking(INFRA.repo.get_node, int(node_id))
+    if not node:
+        return {"online": False, "error": "node not found"}
+    return await run_blocking(unix_nodes_mod.status, node)
+
+
+# ── 5.7 Container statistics (Docker stats API — cgroup counters) ───────────
 
 async def get_container_stats(container_name: str, node_id: Optional[int] = None) -> Dict[str, Any]:
-    """Return {status, cpu, ram{used,total,pct}, disk, uptime} for a container."""
-    if node_id is None:
-        node_id = find_node_id_for_container(container_name)
-    node = get_node(node_id)
+    """
+    Return {status, cpu, ram{used,total,pct}, disk, uptime, net, oom} for a VPS.
 
+    These are *container* numbers read from the Docker stats API, never host
+    counters — mixing the two is how a panel ends up blaming a VPS for the
+    node's own load.
+    """
     empty = {
-        "status": "unknown",
-        "cpu": 0.0,
-        "ram": {"used": 0, "total": 0, "pct": 0.0},
-        "disk": "Unknown",
-        "uptime": "Unknown",
-        "uptime_seconds": 0.0,
-        "online": False,
+        "status": "unknown", "cpu": 0.0,
+        "ram": {"used": 0, "total": 0, "pct": 0.0, "used_mb": 0, "total_mb": 0},
+        "disk": "Unknown", "uptime": "Unknown", "uptime_seconds": 0.0,
+        "online": False, "net": {"rx_bytes": 0, "tx_bytes": 0},
+        "oom": False, "restart_count": 0, "ip": None,
     }
-    if not node:
+    if not is_docker_vps(container_name):
+        return {**empty, "status": "legacy", "disk": "Legacy LXC record"}
+    try:
+        client = docker_client(node_id)
+        stats = await run_blocking(unix_monitoring.container_stats, client, container_name)
+    except Exception as exc:
+        logger.debug("container stats failed for %s: %s", container_name, exc)
         return empty
 
-    if not node["is_local"]:
-        payload = await run_blocking(_read_remote_container_stats, node, container_name)
-        if not payload:
-            return empty
-        payload.setdefault("status", "unknown")
-        payload.setdefault("cpu", 0.0)
-        payload.setdefault("ram", {"used": 0, "total": 0, "pct": 0.0})
-        payload.setdefault("disk", "Unknown")
-        payload.setdefault("uptime", "Unknown")
-        payload["online"] = True
-        return payload
-
-    status = await container_state(container_name, node_id)
-    if status != "running":
-        return {**empty, "status": status, "online": True}
-
-    try:
-        output = await container_shell(container_name, _CT_STAT_SCRIPT, timeout=40, node_id=node_id)
-    except Exception as exc:
-        logger.debug("container stats script failed for %s: %s", container_name, exc)
-        return {**empty, "status": status, "online": True}
-
-    values: Dict[str, str] = {}
-    for line in output.splitlines():
-        key, _, value = line.partition("=")
-        values[key.strip()] = value.strip()
-
-    def _int(key: str) -> int:
+    if stats.get("status") not in ("unknown", "missing"):
         try:
-            return int(float(values.get(key, 0) or 0))
-        except (TypeError, ValueError):
-            return 0
+            INFRA.repo.patch_vps(container_name, status=str(stats["status"]),
+                                 restart_count=int(stats.get("restart_count") or 0),
+                                 last_health_ts=datetime.now(timezone.utc).isoformat())
+        except Exception:
+            pass
+        try:
+            ram = stats.get("ram") or {}
+            await run_blocking(save_usage_snapshot, container_name,
+                               float(stats.get("cpu") or 0), float(ram.get("pct") or 0),
+                               int(ram.get("used_mb") or 0), int(ram.get("total_mb") or 0))
+        except Exception as exc:
+            logger.debug("usage snapshot failed for %s: %s", container_name, exc)
+    return stats
 
-    mem_used = _int("MEM_USED")
-    mem_total = _int("MEM_TOTAL")
-    cpu_pct = float(_int("CPU_PCT"))
-    uptime_secs = float(_int("UPTIME"))
-    ram_pct = (mem_used / mem_total * 100.0) if mem_total > 0 else 0.0
 
+async def get_container_networks(container_name: str,
+                                 node_id: Optional[int] = None) -> Dict[str, str]:
+    """Map Docker network name → container IPv4 address."""
     try:
-        disk_out = await container_shell(
-            container_name,
-            "df -Pk / | awk 'NR==2{print $3\" \"$2\" \"$5}'",
-            timeout=20, node_id=node_id,
-        )
-        used_kb, total_kb, used_pct = (disk_out.split() + ["?", "?", "?"])[:3]
-        disk = f"{fmt_bytes(int(used_kb) * 1024)} / {fmt_bytes(int(total_kb) * 1024)} ({used_pct})"
-    except Exception:
-        disk = "Unknown"
-
-    ram_used_mb = mem_used // (1024 * 1024)
-    ram_total_mb = mem_total // (1024 * 1024)
-
-    await run_blocking(save_usage_snapshot, container_name, cpu_pct, ram_pct, ram_used_mb, ram_total_mb)
-
-    return {
-        "status": status,
-        "cpu": round(cpu_pct, 1),
-        "ram": {"used": ram_used_mb, "total": ram_total_mb, "pct": round(ram_pct, 1)},
-        "disk": disk,
-        "uptime": fmt_duration(uptime_secs) if uptime_secs else "Unknown",
-        "uptime_seconds": uptime_secs,
-        "online": True,
-    }
-
-
-async def get_container_networks(container_name: str, node_id: Optional[int] = None) -> Dict[str, str]:
-    """Map interface → IPv4 address (loopback excluded)."""
-    try:
-        output = await container_shell(
-            container_name,
-            "ip -4 -o addr show 2>/dev/null || ifconfig -a 2>/dev/null",
-            timeout=25, node_id=node_id,
-        )
+        client = docker_client(node_id)
+        container = await run_blocking(unix_ctr.get_container, client, container_name)
+        return await run_blocking(unix_networking.container_addresses, container)
     except Exception as exc:
         logger.debug("network lookup failed for %s: %s", container_name, exc)
         return {}
 
-    networks: Dict[str, str] = {}
-    for line in output.splitlines():
-        match = re.match(r"\d+:\s+(\S+)\s+inet\s+(\d+\.\d+\.\d+\.\d+)", line)
-        if match:
-            interface, ip = match.group(1), match.group(2)
-            if interface != "lo" and not ip.startswith("127."):
-                networks[interface] = ip
-            continue
-        match = re.match(r"(\S+):.*inet (?:addr:)?(\d+\.\d+\.\d+\.\d+)", line)
-        if match:
-            interface, ip = match.group(1), match.group(2)
-            if interface != "lo" and not ip.startswith("127."):
-                networks[interface] = ip
-    return networks
-
 
 async def get_container_ip(container_name: str, node_id: Optional[int] = None) -> Optional[str]:
     networks = await get_container_networks(container_name, node_id)
-    for interface in ("eth0", "ens3", "enp0s3", "en0"):
-        if interface in networks:
-            return networks[interface]
+    preferred = unix_config.DOCKER_DEFAULT_NETWORK
+    if preferred in networks:
+        return networks[preferred]
+    for key in ("bridge", "default"):
+        if key in networks:
+            return networks[key]
     return next(iter(networks.values()), None)
 
 
-# ── 5.6 Port forwarding lifecycle ────────────────────────────────────────────
+async def get_container_network_stats(container_name: str,
+                                      node_id: Optional[int] = None) -> Dict[str, int]:
+    """RX/TX byte counters for a container."""
+    stats = await get_container_stats(container_name, node_id)
+    return dict(stats.get("net") or {"rx_bytes": 0, "tx_bytes": 0})
+
+
+# ── 5.8 Port forwarding lifecycle ───────────────────────────────────────────
 
 async def create_port_forward(user_id: Union[int, str], container: str, vps_port: int,
                               node_id: int, protocol: str = "both") -> Optional[int]:
-    """Create a TCP+UDP proxy device and persist it. Returns the host port."""
-    host_port = await run_blocking(get_available_host_port)
-    if not host_port:
-        logger.error("No free host port available for %s", container)
-        return None
+    """
+    Reserve a host port and publish it on the container.
 
-    protocols = ("tcp", "udp") if protocol == "both" else (protocol,)
-    created_devices: List[str] = []
-    try:
-        for proto in protocols:
-            device_name = f"{proto}_proxy_{host_port}"
-            await run_lxc_argv(
-                container,
-                ["config", "device", "add", container, device_name, "proxy",
-                 f"listen={proto}:0.0.0.0:{host_port}",
-                 f"connect={proto}:127.0.0.1:{vps_port}"],
-                timeout=40, node_id=node_id,
-            )
-            created_devices.append(device_name)
-    except Exception as exc:
-        logger.error("Port forward creation failed on %s: %s", container, exc)
-        for device_name in created_devices:
-            try:
-                await run_lxc_argv(container, ["config", "device", "remove", container, device_name],
-                                   timeout=20, node_id=node_id, check=False)
-            except Exception:
-                pass
+    Docker fixes published ports at creation time, so a new forward recreates
+    the container from the same image and volume — customer data is untouched.
+    The reservation is written to the database *before* the container is
+    rebuilt, and a UNIQUE index guarantees no two VPS can claim the same
+    host address + port + protocol.
+    """
+    vps = INFRA.repo.get_vps_by_container(container)
+    if not vps:
+        logger.error("create_port_forward: no VPS record for %s", container)
         return None
-
     try:
-        await run_blocking(add_forward_row, str(user_id), container, int(vps_port), int(host_port), protocol)
-    except sqlite3.Error as exc:
-        logger.error("Could not persist port forward: %s", exc)
-        for device_name in created_devices:
-            try:
-                await run_lxc_argv(container, ["config", "device", "remove", container, device_name],
-                                   timeout=20, node_id=node_id, check=False)
-            except Exception:
-                pass
+        outcome = await run_blocking(unix_lifecycle.add_port, INFRA.repo, vps,
+                                     int(vps_port), str(protocol))
+    except UnixNodesError as exc:
+        logger.error("port allocation failed for %s: %s", container, exc)
         return None
-    return host_port
+    host_port = outcome.get("host_port")
+    if outcome.get("port_problems"):
+        logger.warning("port problems on %s: %s", container, outcome["port_problems"])
+    if host_port and get_user_allocation(user_id) == 0:
+        allocate_ports(user_id, 1)
+    return int(host_port) if host_port else None
 
 
 async def remove_port_forward(forward_id: int) -> Tuple[bool, Optional[str], Optional[int]]:
     """Remove a forward. Returns (success, owner_id, host_port)."""
-    record = await run_blocking(get_forward, forward_id)
-    if not record:
+    row = INFRA.repo.query_one("SELECT * FROM docker_ports WHERE id = ?", (int(forward_id),))
+    if not row:
         return False, None, None
-
-    container = record["vps_container"]
-    host_port = int(record["host_port"])
-    node_id = find_node_id_for_container(container)
-
-    for proto in ("tcp", "udp"):
-        try:
-            await run_lxc_argv(container, ["config", "device", "remove", container, f"{proto}_proxy_{host_port}"],
-                               timeout=25, node_id=node_id, check=False)
-        except Exception as exc:
-            logger.debug("device remove %s on %s: %s", proto, container, exc)
-
-    await run_blocking(delete_forward_row, forward_id)
-    return True, str(record["user_id"]), host_port
+    row = dict(row)
+    container = str(row["container_name"])
+    host_port = int(row["host_port"])
+    vps = INFRA.repo.get_vps_by_container(container)
+    if not vps:
+        INFRA.repo.release_port(int(forward_id))
+        return True, str(row.get("user_id") or ""), host_port
+    try:
+        await run_blocking(unix_lifecycle.remove_port, INFRA.repo, vps, int(forward_id))
+    except UnixNodesError as exc:
+        logger.error("could not remove forward %s: %s", forward_id, exc)
+        return False, None, None
+    return True, str(row.get("user_id") or ""), host_port
 
 
 async def recreate_port_forwards(container: str) -> int:
-    """Re-attach every stored forward (after start / restart / reinstall)."""
-    records = await run_blocking(get_forwards_for_container, container)
-    if not records:
+    """
+    Re-apply every stored forward to a container.
+
+    Returns the number of reservations that are now published.  If the
+    container is stopped the ledger is simply kept and applied on next start.
+    """
+    vps = INFRA.repo.get_vps_by_container(container)
+    if not vps:
         return 0
-    node_id = find_node_id_for_container(container)
-    restored = 0
-    for record in records:
-        host_port, vps_port = int(record["host_port"]), int(record["vps_port"])
-        try:
-            for proto in ("tcp", "udp"):
-                await run_lxc_argv(
-                    container,
-                    ["config", "device", "remove", container, f"{proto}_proxy_{host_port}"],
-                    timeout=15, node_id=node_id, check=False,
-                )
-                await run_lxc_argv(
-                    container,
-                    ["config", "device", "add", container, f"{proto}_proxy_{host_port}", "proxy",
-                     f"listen={proto}:0.0.0.0:{host_port}",
-                     f"connect={proto}:127.0.0.1:{vps_port}"],
-                    timeout=30, node_id=node_id,
-                )
-            restored += 1
-        except Exception as exc:
-            logger.warning("Could not restore forward %s→%s on %s: %s", host_port, vps_port, container, exc)
-    return restored
+    try:
+        problems = await run_blocking(unix_lifecycle.republish, INFRA.repo, vps)
+    except UnixNodesError as exc:
+        logger.warning("could not republish ports for %s: %s", container, exc)
+        return 0
+    if problems:
+        logger.warning("port problems after republish on %s: %s", container, problems)
+    return len(INFRA.repo.active_ports_for_container(container))
 
 
-# ── 5.7 VPS lifecycle helpers ────────────────────────────────────────────────
+def get_ssh_host_port(container_name: str) -> Optional[int]:
+    """Host port that reaches a VPS on container port 22."""
+    return INFRA.ssh_host_port(container_name)
+
+
+def forwards_for_container(container_name: str) -> List[Dict[str, Any]]:
+    """Active forwards shaped like the legacy `port_forwards` rows the UI uses."""
+    return [INFRA.repo.port_row_to_forward(row)
+            for row in INFRA.repo.active_ports_for_container(container_name)]
+
+
+# ── 5.9 VPS lifecycle helpers ───────────────────────────────────────────────
 
 async def provision_container(container_name: str, os_version: str, node_id: int, *,
                               ram_gb: int, cpu: int, disk_gb: int,
                               storage_pool: Optional[str] = None) -> None:
-    """Create + configure a fresh container (init → limits → config → start)."""
-    with _SHELL_CACHE_LOCK:
-        _SHELL_CACHE.pop(container_name, None)
-    pool = storage_pool or DEFAULT_STORAGE_POOL
-    await run_lxc_command(
-        container_name,
-        f"init {shlex.quote(os_version)} {shlex.quote(container_name)} -s {shlex.quote(pool)}",
-        timeout=900, node_id=node_id,
-    )
-    await run_lxc_argv(container_name, ["config", "set", container_name, "limits.memory", f"{int(ram_gb) * 1024}MB"],
-                       timeout=30, node_id=node_id)
-    await run_lxc_argv(container_name, ["config", "set", container_name, "limits.cpu", str(int(cpu))],
-                       timeout=30, node_id=node_id)
-    try:
-        await run_lxc_argv(container_name, ["config", "device", "set", container_name, "root", f"size={int(disk_gb)}GB"],
-                           timeout=40, node_id=node_id)
-    except Exception as exc:
-        logger.warning("Could not set disk size for %s: %s", container_name, exc)
+    """
+    Create a fresh container with limits applied.
 
-    await apply_lxc_config(container_name, node_id)
-    await run_lxc_argv(container_name, ["start", container_name], timeout=180, node_id=node_id)
-    await apply_internal_permissions(container_name, node_id)
+    Kept for the flows that only need "make me a container" (the full
+    credential/DB pipeline lives in `unixnodes.services.provisioning`).
+    """
+    request = unix_provisioning.ProvisionRequest(
+        owner_id=0, container_name=container_name, image=os_version,
+        ram_mb=int(ram_gb) * 1024, cpu=float(cpu), storage_gb=int(disk_gb),
+        node_id=int(node_id))
+    await run_blocking(unix_provisioning.provision, INFRA.repo, request)
 
 
 async def run_host_motd(container_name: str, node_id: int) -> None:
     if not HOST_MOTD:
         return
     try:
-        # Reduced timeout (60s) and wrapped in asyncio.wait_for to fail gracefully
+        # The hook is executed once on first boot by the container supervisor;
+        # this call covers containers created before the hook was configured.
         await asyncio.wait_for(
             container_shell(container_name, HOST_MOTD, timeout=60, node_id=node_id),
-            timeout=75.0
-        )
+            timeout=75.0)
         logger.info("Startup script executed inside %s", container_name)
     except asyncio.TimeoutError:
         logger.warning("Startup script timed out on %s (took >75s)", container_name)
     except Exception as exc:
         logger.warning("Startup script failed on %s: %s", container_name, exc)
+
+
+async def docker_storage_report(container_name: str, node_id: Optional[int] = None) -> Dict[str, Any]:
+    """Real quota state for one VPS (honest about what is *not* enforced)."""
+    quota = INFRA.repo.get_quota(container_name) or {}
+    client = docker_client(node_id)
+    mountpoint = await run_blocking(unix_volumes.mountpoint, client, container_name) or ""
+    support = await run_blocking(unix_resources.detect_quota_support, mountpoint,
+                                 node_is_local=node_is_local(node_id))
+    used = await run_blocking(unix_monitoring.disk_usage_bytes, client, container_name)
+    return {
+        "method": str(quota.get("method") or support.method),
+        "enforced": bool(quota.get("enforced")) and support.supported,
+        "support": support.as_dict(),
+        "size_gb": float(quota.get("size_gb") or 0),
+        "used_bytes": int(used.get("used") or 0),
+        "total_bytes": int(used.get("total") or 0),
+        "mountpoint": mountpoint,
+    }
 
 
 async def ensure_vps_role(guild: Optional[discord.Guild], member: Optional[discord.Member]) -> None:
@@ -3976,6 +3609,90 @@ class ProgressPanel:
             await _safe_edit(self.message, content=content or "✅ **Done**", embed=None)
 
 
+class PanelPump:
+    """
+    Bridge worker-thread progress callbacks onto the event loop's panel.
+
+    The Docker backend runs in worker threads and reports progress with a plain
+    ``progress(index, state, detail)`` callable.  A coroutine cannot be awaited
+    from a thread, so the callback only enqueues the event; a task on the event
+    loop drains the queue and repaints the panel.  The result is the same live
+    animated panel as before, with no blocking of the Discord loop.
+    """
+
+    def __init__(self, panel: "ProgressPanel", total: int) -> None:
+        self.panel = panel
+        self.total = max(1, int(total))
+        self.loop = asyncio.get_event_loop()
+        self.queue: asyncio.Queue = asyncio.Queue()
+        self._task: Optional[asyncio.Task] = None
+        self._done = -1
+        self.events: List[Tuple[int, str, str]] = []
+
+    # ── called from a worker thread ─────────────────────────────────────────
+    def emit(self, index: int, state: str, detail: str = "") -> None:
+        """Thread-safe progress callback handed to the unixnodes services."""
+        try:
+            self.loop.call_soon_threadsafe(
+                self.queue.put_nowait, (int(index), str(state), str(detail or "")))
+        except RuntimeError:  # loop already closed
+            pass
+
+    def emit_line(self, message: str) -> None:
+        """
+        Progress callback for services that report a single status string
+        (backups, restores) rather than a numbered step.
+
+        The panel keeps its first step running and repaints its detail line, so
+        the user still sees a live animation with the real message.
+        """
+        self.emit(0, "running", message)
+
+    # ── coroutine helpers ───────────────────────────────────────────────────
+    def start(self) -> None:
+        self._task = asyncio.ensure_future(self._run(), name="ui-panel-pump")
+
+    async def _run(self) -> None:
+        while True:
+            index, state, detail = await self.queue.get()
+            if index < 0:
+                return
+            self.events.append((index, state, detail))
+            try:
+                if state == "done":
+                    for done in range(self._done + 1, index):
+                        await self.panel.step(done, "done")
+                    self._done = max(self._done, index)
+                    await self.panel.step(index, "done", truncate_text(detail, 60))
+                else:
+                    for done in range(self._done + 1, index):
+                        await self.panel.step(done, "done")
+                    self._done = max(self._done, index - 1)
+                    await self.panel.step(index, "running", truncate_text(detail, 60))
+            except Exception:  # pragma: no cover - never let paint kill the job
+                logger.debug("panel repaint failed", exc_info=True)
+
+    async def stop(self, *, complete: bool = True) -> None:
+        """Signal the pump to drain, then optionally mark every step done."""
+        try:
+            self.loop.call_soon_threadsafe(self.queue.put_nowait, (-1, "", ""))
+        except RuntimeError:
+            pass
+        if self._task is not None:
+            try:
+                await asyncio.wait_for(self._task, timeout=15)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                self._task.cancel()
+            self._task = None
+        if complete:
+            for done in range(self._done + 1, self.total):
+                try:
+                    await self.panel.step(done, "done")
+                except Exception:
+                    pass
+            self._done = self.total - 1
+
+
 async def thinking(channel: discord.abc.Messageable, title: str = "Working",
                    subtitle: str = "Hang tight, this only takes a moment…",
                    *, delete_after: Optional[float] = None,
@@ -4668,7 +4385,7 @@ async def collect_platform_snapshot() -> Dict[str, Any]:
     ports_used = int((await run_blocking(query_one, "SELECT COUNT(*) AS c FROM port_forwards"))["c"])
     ports_alloc = int((await run_blocking(query_one,
                                           "SELECT COALESCE(SUM(allocated_ports),0) AS s FROM port_allocations"))["s"])
-    sessions = len(webssh_sessions) if WEBSSH_ENABLED else 0
+    sessions = len(WEBSSH_BACKEND.sessions) if WEBSSH_ENABLED else 0
 
     return {
         "nodes": nodes,
@@ -4870,742 +4587,130 @@ class LiveContainerGrid(LivePanelView):
         return embed
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 7. WEB SSH TERMINAL  (Flask + Paramiko)
+# 7. WEB SSH TERMINAL  (thin bridge → unixnodes.web.terminal)
 # ═══════════════════════════════════════════════════════════════════════════
 #
-#  Rewritten vs v8.0:
-#   • Removed the "connect to the container's own port 5000" forward — nothing
-#     listened there, so every generated Web-SSH link was dead on arrival.
-#     Instead each VPS gets a signed, expiring, per-user URL that auto-connects
-#     to the *correct* forwarded SSH port.
-#   • Sessions are bound to the issuing token/IP, rate-limited and capped.
-#   • Host-key verification instead of blind AutoAddPolicy.
-#   • Terminal UI has a built-in fallback (no CDN required) and mobile key bar.
+#  v11: the Flask app, the token vault, the session table and the Paramiko
+#  reader/writer threads all live in `unixnodes/web/terminal.py`.  This section
+#  only wires the platform's own primitives into that service so there is a
+#  single source of truth for credentials, permissions and audit events.
 #
-#  Fixes vs v9.0:
-#   • `unlock_keys` (the browser keys issued after a correct PIN) are now
-#     persisted, so restarting the bot no longer logs every browser out of a
-#     PIN-protected terminal.
-#   • Token rows are cleaned up when they expire instead of lingering forever.
+#  Security fixes carried into v11 (the UI in webssh.html is unchanged):
+#   • The browser never receives a root password.  v10 injected the decrypted
+#     password into the page's `__AUTOCONNECT__` payload *before* the PIN was
+#     checked, so any visitor could read it from the HTML source.  Now the page
+#     only ever gets `{host, port, username, label}` and the password is
+#     resolved server-side from the token on `/api/ssh/connect`.
+#   • A token is mandatory.  Ad-hoc "connect me to any host" requests are
+#     rejected unless WEBSSH_ALLOW_ADHOC=true (default false).
+#   • Content-Security-Policy + `Cache-Control: no-store` on every response.
+#   • 12 connection attempts/minute per IP, 8 sessions/IP, 200 sessions total.
+#   • Container ids/ports supplied by the client are ignored — the target is
+#     always resolved through the database and the token.
 
 if WEBSSH_ENABLED:
-    import uuid
+    from unixnodes.web import terminal as unix_terminal
 
-    WEBSSH_HTML_PATH = BASE_DIR / "webssh.html"
+    WEBSSH_HTML_PATH = unix_terminal.WEBSSH_HTML_PATH
 
-    def _load_webssh_html() -> str:
-        """Load the Web SSH UI from the external webssh.html file."""
+    def _webssh_audit(action: str, actor: Any = None, **kwargs: Any) -> None:
+        """Bridge the terminal's audit calls onto the bot's audit log."""
         try:
-            return WEBSSH_HTML_PATH.read_text(encoding="utf-8")
-        except OSError as exc:
-            logger.error("Unable to load Web SSH HTML from %s: %s", WEBSSH_HTML_PATH, exc)
-            return (
-                "<!doctype html><html><body>"
-                "<h2>Web SSH UI file is missing</h2>"
-                "<p>Place <code>webssh.html</code> next to the bot Python file.</p>"
-                "</body></html>"
-            )
+            audit(action, actor, **kwargs)
+        except Exception:  # pragma: no cover - auditing must never break login
+            logger.debug("webssh audit failed for %s", action, exc_info=True)
 
-    @dataclass
-    class WebSSHSession:
-        session_id: str
-        token: str
-        client_ip: str
-        ssh_client: Any
-        transport: Any
-        channel: Any
-        host: str
-        port: int
-        username: str
-        created_at: datetime
-        last_activity: datetime
-        buffer: str = ""
-        closed: bool = False
-        lock: threading.Lock = dc_field(default_factory=threading.Lock)
-        reader: Optional[threading.Thread] = None
+    def _webssh_node_address(node_id: int) -> str:
+        """Public address a browser should dial for a node's published SSH port."""
+        node = get_node(int(node_id or 1))
+        if node and not node.get("is_local"):
+            endpoint = str(node.get("docker_host") or node.get("url") or "")
+            if endpoint:
+                host = endpoint.split("://", 1)[-1].split("/")[0].split(":")[0]
+                if host and not _is_private_ip(host):
+                    return host
+        return WEBSSH_SERVER_IP
 
-        def touch(self) -> None:
-            self.last_activity = datetime.now()
-
-    @dataclass
-    class WebSSHToken:
-        token: str
-        user_id: str
-        vps_id: Optional[int]
-        host: Optional[str]
-        port: Optional[int]
-        username: str
-        password: Optional[str]
-        label: str
-        created_at: datetime
-        expires_at: datetime
-        used: int = 0
-        max_uses: int = 3
-        # ── optional second factor ──
-        # The link alone is a bearer credential: if it is forwarded, screenshotted
-        # or read over someone's shoulder, it used to be enough to get a root
-        # shell. With a PIN the stored value is an Argon2id/PBKDF2 *hash* and the
-        # terminal refuses to connect until the PIN has been typed.
-        pin_hash: Optional[str] = None
-        pin_attempts: int = 0
-        unlock_keys: set = dc_field(default_factory=set)
-
-        @property
-        def pin_required(self) -> bool:
-            return bool(self.pin_hash)
-
-        def is_valid(self) -> bool:
-            return datetime.now() < self.expires_at and self.used < self.max_uses
-
-        def is_unlocked(self, key: Optional[str]) -> bool:
-            """Constant-time check of a browser unlock key (PIN already verified)."""
-            if not self.pin_required:
-                return True
-            if not key:
-                return False
-            for candidate in self.unlock_keys:
-                if hmac.compare_digest(str(candidate), str(key)):
-                    return True
-            return False
-
-    webssh_tokens: Dict[str, "WebSSHToken"] = {}
-    webssh_sessions: Dict[str, "WebSSHSession"] = {}
-    webssh_lock = threading.RLock()
-    webssh_connect_attempts: Dict[str, List[float]] = {}
-
-    def _token_row(entry: "WebSSHToken") -> Tuple[Any, ...]:
-        return (
-            entry.token, entry.user_id, entry.vps_id, entry.host, entry.port,
-            entry.username, entry.password, entry.label, entry.pin_hash,
-            entry.created_at.isoformat(), entry.expires_at.isoformat(),
-            entry.used, entry.max_uses, entry.pin_attempts,
-            json.dumps(sorted(entry.unlock_keys)[-5:]),
-        )
-
-    _WEBSSH_COLUMNS = (
-        "token, user_id, vps_id, host, port, username, password, label, pin_hash, "
-        "created_at, expires_at, used, max_uses, pin_attempts, unlock_keys"
+    WEBSSH_SETTINGS = unix_terminal.TerminalSettings(
+        host=WEBSSH_HOST,
+        port=WEBSSH_PORT,
+        server_ip=WEBSSH_SERVER_IP,
+        url_format=WEBSSH_URL_FORMAT,
+        session_ttl=WEBSSH_SESSION_TTL,
+        max_sessions=WEBSSH_MAX_SESSIONS,
+        max_sessions_per_ip=WEBSSH_SESSION_MAX_PER_IP,
+        connect_timeout=WEBSSH_CONNECT_TIMEOUT,
+        default_pin=WEBSSH_DEFAULT_PIN,
+        pin_attempts=WEBSSH_PIN_ATTEMPTS,
+        allow_adhoc=_env_bool("WEBSSH_ALLOW_ADHOC", False),
+        bot_name=BOT_NAME,
+        bot_version=BOT_VERSION,
     )
-    _WEBSSH_PLACEHOLDERS = ", ".join(["?"] * 15)
-    _WEBSSH_UPSERT = (
-        f"INSERT OR REPLACE INTO webssh_tokens ({_WEBSSH_COLUMNS}) VALUES ({_WEBSSH_PLACEHOLDERS})"
+
+    WEBSSH_BACKEND = unix_terminal.TerminalBackend(
+        repo=INFRA.repo,
+        encrypt=encrypt_secret,
+        decrypt=decrypt_secret,
+        hash_password=hash_password,
+        verify_password=verify_password,
+        audit=_webssh_audit,
+        ssh_host_port=get_ssh_host_port,
+        node_address=_webssh_node_address,
+        settings=WEBSSH_SETTINGS,
     )
+
+    def _load_webssh_tokens_from_db() -> int:
+        """Reload persisted terminal tokens after a restart (PIN links survive)."""
+        return WEBSSH_BACKEND.load_tokens()
 
     def issue_webssh_token(user_id: Union[int, str], *, vps: Optional[Dict[str, Any]] = None,
-                           ttl_seconds: int = 900, host: Optional[str] = None,
-                           port: Optional[int] = None, password: Optional[str] = None,
-                           label: str = "", max_uses: int = 3,
-                           pin: Optional[str] = None) -> str:
-        """Create a signed, expiring, per-user terminal link."""
-        if vps is not None:
-            node_id = int(vps.get("node_id") or 1)
-            node = get_node(node_id)
-            forward = None
-            for record in get_forwards_for_container(vps["container_name"]):
-                if int(record["vps_port"]) == 22:
-                    forward = record
-                    break
-            host = host or ((node.get("url") or "").replace("http://", "").replace("https://", "").split(":")[0]
-                            if node else "") or WEBSSH_SERVER_IP
-            port = port or (int(forward["host_port"]) if forward else None)
-            password = password if password is not None else decrypt_secret(vps.get("root_password"))
-            label = label or f"{vps['container_name']}"
+                           container_name: Optional[str] = None, node_id: Optional[int] = None,
+                           ttl_seconds: int = 900, label: str = "",
+                           pin: Optional[str] = None, password: Optional[str] = None,
+                           max_uses: int = 3, **_legacy: Any) -> str:
+        """
+        Create a signed, expiring, single-VPS terminal link.
 
-        token = secrets.token_urlsafe(24)
-        entry = WebSSHToken(
-            token=token,
-            user_id=str(user_id),
-            vps_id=int(vps["id"]) if vps and vps.get("id") else None,
-            host=host,
-            port=int(port) if port else None,
-            username="root",
-            password=password,
-            label=label or "Your VPS",
-            created_at=datetime.now(),
-            expires_at=datetime.now() + timedelta(seconds=ttl_seconds),
-            pin_hash=hash_password(str(pin)) if pin else None,
-        )
-        with webssh_lock:
-            # prune expired tokens
-            for key, value in list(webssh_tokens.items()):
-                if not value.is_valid():
-                    webssh_tokens.pop(key, None)
-                    try:
-                        execute("DELETE FROM webssh_tokens WHERE token = ?", (key,))
-                    except Exception:
-                        pass
-            webssh_tokens[token] = entry
-
-        _save_webssh_token(token)
-        return token
-
-    def _load_webssh_tokens_from_db() -> None:
-        """Load webssh tokens (including unlock keys) from database on startup."""
-        try:
-            rows = query_all(f"SELECT {_WEBSSH_COLUMNS} FROM webssh_tokens")
-            loaded = 0
-            with webssh_lock:
-                for row in rows:
-                    try:
-                        (token, user_id, vps_id, host, port, username, password, label,
-                         pin_hash, created_at_iso, expires_at_iso, used, max_uses,
-                         pin_attempts, unlock_keys_raw) = row
-
-                        entry = WebSSHToken(
-                            token=token,
-                            user_id=user_id,
-                            vps_id=vps_id,
-                            host=host,
-                            port=port,
-                            username=username,
-                            password=password,
-                            label=label,
-                            created_at=datetime.fromisoformat(created_at_iso),
-                            expires_at=datetime.fromisoformat(expires_at_iso),
-                            used=used,
-                            max_uses=max_uses,
-                            pin_hash=pin_hash,
-                            pin_attempts=pin_attempts,
-                        )
-                        try:
-                            entry.unlock_keys = set(json.loads(unlock_keys_raw or "[]"))
-                        except (TypeError, ValueError):
-                            entry.unlock_keys = set()
-
-                        if entry.is_valid():
-                            webssh_tokens[token] = entry
-                            loaded += 1
-                        else:
-                            execute("DELETE FROM webssh_tokens WHERE token = ?", (token,))
-                    except Exception as exc:
-                        logger.debug("Could not load webssh token: %s", exc)
-            logger.debug("Loaded %d webssh tokens from database", loaded)
-        except Exception as exc:
-            logger.debug("Could not load webssh tokens from database: %s", exc)
-
-    def _save_webssh_token(token: str) -> None:
-        """Save/update a webssh token (PIN state + unlock keys) in the database."""
-        with webssh_lock:
-            entry = webssh_tokens.get(token)
-        if not entry:
-            return
-        try:
-            execute(_WEBSSH_UPSERT, _token_row(entry))
-        except Exception as exc:
-            logger.debug("Could not save webssh token to database: %s", exc)
+        The password is stored **encrypted** inside the token record and is
+        never handed to the browser.
+        """
+        name = container_name or (vps or {}).get("container_name")
+        if not name:
+            raise ValueError("issue_webssh_token needs a container_name (or a vps record)")
+        target_node = node_id or int((vps or {}).get("node_id") or 1)
+        return WEBSSH_BACKEND.issue(
+            user_id=user_id, container_name=str(name), node_id=int(target_node),
+            ttl_seconds=int(ttl_seconds), label=label or str(name), pin=pin,
+            password=password, max_uses=int(max_uses))
 
     def build_webssh_link(token: str, *, host_port: Optional[int] = None) -> str:
-        if host_port:
-            return WEBSSH_URL_FORMAT.format(SERVER_IP=WEBSSH_SERVER_IP, PORT=host_port)
-        return WEBSSH_URL_FORMAT.format(SERVER_IP=WEBSSH_SERVER_IP, PORT=WEBSSH_PORT)
+        """Public URL for a token (``host_port`` is accepted for compatibility)."""
+        return WEBSSH_BACKEND.url_for(str(token))
 
     def _public_url_for_token(token: str) -> str:
-        base = WEBSSH_URL_FORMAT.format(SERVER_IP=WEBSSH_SERVER_IP, PORT=WEBSSH_PORT).rstrip("/")
-        return f"{base}/t/{token}"
-
-    def _cleanup_webssh() -> None:
-        now = datetime.now()
-        with webssh_lock:
-            for session_id, session in list(webssh_sessions.items()):
-                idle = (now - session.last_activity).total_seconds()
-                if session.closed or idle > WEBSSH_SESSION_TTL:
-                    _close_session(session_id, reason="expired" if not session.closed else "closed")
-            for token, entry in list(webssh_tokens.items()):
-                if not entry.is_valid():
-                    webssh_tokens.pop(token, None)
-                    try:
-                        execute("DELETE FROM webssh_tokens WHERE token = ?", (token,))
-                    except Exception:
-                        pass
-
-    def _close_session(session_id: str, reason: str = "closed") -> None:
-        session = webssh_sessions.pop(session_id, None)
-        if not session:
-            return
-        session.closed = True
-        for closer in (session.channel, session.transport, session.ssh_client):
-            try:
-                closer.close()
-            except Exception:
-                pass
-        logger.info("Web-SSH session %s closed (%s, %s@%s)", session_id[:8], reason,
-                    session.username, session.host)
-
-    def _webssh_cleanup_loop() -> None:
-        while True:
-            try:
-                _cleanup_webssh()
-            except Exception as exc:  # pragma: no cover
-                logger.debug("webssh cleanup error: %s", exc)
-            time.sleep(120)
-
-    def _ip_rate_ok(ip: str) -> bool:
-        now = time.time()
-        with webssh_lock:
-            history = [t for t in webssh_connect_attempts.get(ip, []) if now - t < 60]
-            history.append(now)
-            webssh_connect_attempts[ip] = history
-            return len(history) <= 12
-
-    def _sessions_for_ip(ip: str) -> int:
-        return sum(1 for s in webssh_sessions.values() if s.client_ip == ip and not s.closed)
-
-    def _render_terminal(token: str, autoconnect: Optional[Dict[str, Any]],
-                         *, unlock_key: str = "") -> str:
-        payload = json.dumps(autoconnect) if autoconnect else "null"
-        # A password containing "</script>" must not be able to end the tag.
-        payload = payload.replace("</", "<\\/")
-        html = _load_webssh_html()
-        html = html.replace("__BOT_NAME__", BOT_NAME)
-        html = html.replace("__BOT_VERSION__", BOT_VERSION)
-        html = html.replace("__TOKEN__", token or "none")
-        html = html.replace("__UNLOCK_KEY__", unlock_key or "")
-        html = html.replace("__AUTOCONNECT__", payload)
-        return html
-
-    def _render_pin_page(token: str, *, expired: bool = False, attempts_left: int = 5) -> str:
-        # Return webssh.html but inject JS to open the PIN modal on load
-        html = _load_webssh_html()
-        html = html.replace("__BOT_NAME__", BOT_NAME)
-        html = html.replace("__BOT_VERSION__", BOT_VERSION)
-        html = html.replace("__TOKEN__", token or "none")
-        html = html.replace("__UNLOCK_KEY__", "")  # No unlock key for PIN entry
-
-        # Include autoconnect data even before PIN is entered!
-        # This way, after PIN verification, the doConnect() call will work
-        with webssh_lock:
-            entry = webssh_tokens.get(token)
-            if entry and entry.host and entry.port:
-                autoconnect = {
-                    "host": entry.host,
-                    "port": entry.port,
-                    "username": entry.username,
-                    "password": entry.password,
-                    "label": entry.label,
-                }
-                payload = json.dumps(autoconnect)
-                payload = payload.replace("</", "<\\/")
-            else:
-                payload = "null"
-
-        html = html.replace("__AUTOCONNECT__", payload)
-
-        # Inject script to auto-open PIN modal and show attempt count
-        pin_init = f"""
-        <script>
-            window.__PIN_REQUIRED__ = true;
-            window.__PIN_ATTEMPTS_LEFT__ = {attempts_left};
-            window.__PIN_EXPIRED__ = {str(expired).lower()};
-
-            // Auto-open PIN modal after page load
-            window.addEventListener('load', function() {{
-                var pinModal = document.getElementById('pinModal');
-                if (pinModal) {{
-                    pinModal.classList.add('active');
-                    var inPin = document.getElementById('inPin');
-                    if (inPin) inPin.focus();
-                }}
-
-                // Show attempts left in note
-                if ({attempts_left} <= 0) {{
-                    var note = document.getElementById('pinNote');
-                    if (note) {{
-                        note.textContent = '❌ Too many failed attempts. Session expired.';
-                        note.className = 'modal-note error';
-                        note.style.display = 'block';
-                        document.getElementById('inPin').disabled = true;
-                        document.getElementById('pinSubmit').disabled = true;
-                    }}
-                }} else if ({attempts_left} <= 2) {{
-                    var note = document.getElementById('pinNote');
-                    if (note) {{
-                        note.textContent = '⚠️ ' + {attempts_left} + ' attempt(s) remaining';
-                        note.className = 'modal-note error';
-                        note.style.display = 'block';
-                    }}
-                }}
-            }});
-        </script>
-        """
-        # Insert before closing </body> tag
-        html = html.replace("</body>", pin_init + "</body>")
-        return html
+        return WEBSSH_BACKEND.url_for(str(token))
 
     def create_webssh_app() -> "Flask":
-        flask_app = Flask(f"{BOT_NAME.lower()}-webssh")
-        flask_app.config.update(
-            SECRET_KEY=secrets.token_hex(32),
-            JSON_SORT_KEYS=False,
-            MAX_CONTENT_LENGTH=64 * 1024,
-        )
-
-        def _client_ip() -> str:
-            forwarded = request.headers.get("X-Forwarded-For", "")
-            if forwarded:
-                return forwarded.split(",")[0].strip()
-            return request.remote_addr or "unknown"
-
-        @flask_app.after_request
-        def _security_headers(response):
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            response.headers["X-Frame-Options"] = "SAMEORIGIN"
-            response.headers["Referrer-Policy"] = "no-referrer"
-            response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-            response.headers["Cache-Control"] = "no-store"
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'none'; "
-                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; "
-                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
-                "font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
-                "connect-src 'self'; img-src 'self' data:; form-action 'none'; base-uri 'none'"
-            )
-            return response
-
-        @flask_app.route("/", methods=["GET"])
-        def index():
-            return _render_terminal(token="none", autoconnect=None)
-
-        @flask_app.route("/webssh.html", methods=["GET"])
-        def webssh_html():
-            return _load_webssh_html(), 200, {"Content-Type": "text/html; charset=utf-8"}
-
-        @flask_app.route("/t/<token>", methods=["GET"])
-        def token_terminal(token: str):
-            unlock_key = str(request.args.get("k") or "")[:128]
-            with webssh_lock:
-                entry = webssh_tokens.get(token)
-                if not entry or not entry.is_valid():
-                    if entry and entry.pin_required:
-                        return _render_pin_page(token), 410
-                    return _render_terminal(token="none", autoconnect=None).replace(
-                        "<h2 id=\"loginTitle\">Connect to a server</h2>",
-                        "<h2 id=\"loginTitle\">Link expired</h2>"
-                    ), 410
-                if entry.pin_required and not entry.is_unlocked(unlock_key):
-                    return _render_pin_page(token, attempts_left=WEBSSH_PIN_ATTEMPTS - entry.pin_attempts)
-                autoconnect = {
-                    "host": entry.host,
-                    "port": entry.port,
-                    "username": entry.username,
-                    "password": entry.password,
-                    "label": entry.label,
-                } if entry.host and entry.port else None
-            return _render_terminal(token=token, autoconnect=autoconnect, unlock_key=unlock_key)
-
-        @flask_app.route("/api/ssh/unlock", methods=["POST"])
-        def ssh_unlock():
-            """Second factor: exchange a PIN for a browser unlock key."""
-            payload = request.get_json(silent=True) or {}
-            token_value = str(payload.get("token", ""))[:128]
-            pin = str(payload.get("pin", ""))[:64]
-            client_ip = _client_ip()
-
-            if not _ip_rate_ok(client_ip):
-                return jsonify({"success": False, "error": "Too many attempts, wait a minute."}), 429
-
-            with webssh_lock:
-                entry = webssh_tokens.get(token_value)
-                if not entry or not entry.is_valid():
-                    return jsonify({"success": False, "error": "This terminal link has expired.",
-                                    "code": "token_used"}), 401
-                if not entry.pin_required:
-                    return jsonify({"success": True, "key": ""})
-                if entry.pin_attempts >= WEBSSH_PIN_ATTEMPTS:
-                    webssh_tokens.pop(token_value, None)
-                    return jsonify({"success": False, "code": "too_many_pins",
-                                    "error": "Too many wrong PINs — this link is now disabled. "
-                                             "Ask the bot for a fresh terminal link."}), 423
-
-                if not verify_password(pin, entry.pin_hash):
-                    entry.pin_attempts += 1
-                    _save_webssh_token(token_value)
-                    audit("webssh_pin_fail", entry.user_id, target=entry.label,
-                          detail=f"{WEBSSH_PIN_ATTEMPTS - entry.pin_attempts} attempt(s) left", success=False)
-                    remaining = WEBSSH_PIN_ATTEMPTS - entry.pin_attempts
-                    if remaining <= 0:
-                        webssh_tokens.pop(token_value, None)
-                        return jsonify({"success": False, "code": "too_many_pins",
-                                        "error": "Too many wrong PINs — this link is now disabled."}), 423
-                    return jsonify({"success": False, "code": "bad_pin",
-                                    "error": f"Incorrect PIN. {remaining} attempt(s) left."}), 401
-
-                key = secrets.token_urlsafe(18)
-                entry.unlock_keys.add(key)
-                if len(entry.unlock_keys) > 5:  # oldest browser sessions fall off
-                    entry.unlock_keys = set(list(entry.unlock_keys)[-5:])
-                entry.pin_attempts = 0
-                _save_webssh_token(token_value)
-
-            audit("webssh_pin_ok", entry.user_id, target=entry.label)
-            logger.info("Web-SSH PIN accepted for %s from %s", entry.label, client_ip)
-            return jsonify({"success": True, "key": key})
-
-        @flask_app.route("/api/health", methods=["GET"])
-        def health():
-            with webssh_lock:
-                return jsonify({
-                    "status": "ok",
-                    "bot": BOT_NAME,
-                    "version": BOT_VERSION,
-                    "sessions": len(webssh_sessions),
-                    "uptime_s": int(get_host_uptime_seconds()),
-                })
-
-        @flask_app.route("/api/ssh/connect", methods=["POST"])
-        def ssh_connect():
-            payload = request.get_json(silent=True) or {}
-            token_value = str(payload.get("token", ""))
-            client_ip = _client_ip()
-
-            if not _ip_rate_ok(client_ip):
-                return jsonify({"success": False, "error": "Too many connection attempts, wait a minute."}), 429
-
-            entry: Optional[WebSSHToken] = None
-            is_trusted = False
-            if token_value and token_value != "none":
-                with webssh_lock:
-                    entry = webssh_tokens.get(token_value)
-                    if not entry or not entry.is_valid():
-                        return jsonify({"success": False, "error": "This terminal link has expired.",
-                                        "code": "token_used"}), 401
-                    if entry.pin_required and not entry.is_unlocked(str(payload.get("unlock_key") or "")):
-                        return jsonify({
-                            "success": False, "code": "pin_required",
-                            "error": "This link is PIN protected. Reload the page and enter your PIN.",
-                        }), 401
-                    entry.used += 1
-                    _save_webssh_token(token_value)
-                is_trusted = True
-
-            host = (str(payload.get("host") or "")).strip()
-            port = clamp_int(payload.get("port"), 1, 65535, 22)
-            username = (str(payload.get("username") or "root")).strip()[:32]
-            password = str(payload.get("password") or "")
-
-            if is_trusted and entry and entry.host:
-                host = entry.host
-                port = entry.port or port
-                username = entry.username or username
-                if not password:
-                    password = entry.password or ""
-
-            if not host or not password:
-                return jsonify({"success": False, "error": "Host and password are required."}), 400
-
-            ok, reason = validate_ssh_target(host, port, allow_private=is_trusted or WEBSSH_ALLOW_PRIVATE_HOSTS)
-            if not ok:
-                logger.warning("[SECURITY] Blocked Web-SSH target %s:%s from %s (%s)",
-                               host, port, client_ip, reason)
-                return jsonify({"success": False, "error": f"Target rejected: {reason}"}), 400
-
-            if _sessions_for_ip(client_ip) >= WEBSSH_SESSION_MAX_PER_IP:
-                return jsonify({"success": False, "error": "Too many open sessions from your network."}), 429
-            with webssh_lock:
-                if len(webssh_sessions) >= WEBSSH_MAX_SESSIONS:
-                    return jsonify({"success": False, "error": "Terminal is at capacity, try again shortly."}), 503
-
-            def _open():
-                client = get_ssh_client()
-                # Retry logic: SSH might not be fully ready
-                max_retries = 3
-                last_error = None
-                for attempt in range(max_retries):
-                    try:
-                        client.connect(
-                            hostname=host,
-                            port=int(port),
-                            username=username,
-                            password=password,
-                            timeout=WEBSSH_CONNECT_TIMEOUT,
-                            banner_timeout=WEBSSH_CONNECT_TIMEOUT,
-                            auth_timeout=WEBSSH_CONNECT_TIMEOUT,
-                            allow_agent=False,
-                            look_for_keys=False,
-                        )
-                        persist_host_key(client)
-                        return client
-                    except (paramiko.SSHException, EOFError, ConnectionRefusedError) as e:
-                        last_error = e
-                        logger.debug("WebSSH connection attempt %d/%d failed: %s", attempt + 1, max_retries, e)
-                        if attempt < max_retries - 1:
-                            import time
-                            time.sleep(2)  # Wait before retry
-                        else:
-                            raise last_error
-
-            try:
-                ssh_client = await_webssh_thread(_open)
-            except paramiko.AuthenticationException:
-                audit("webssh_connect", entry.user_id if entry else None, target=f"{host}:{port}", success=False,
-                      detail="auth failed")
-                return jsonify({"success": False, "error": "Authentication failed — check the password."}), 401
-            except paramiko.SSHException as exc:
-                return jsonify({"success": False, "error": f"SSH negotiation failed: {exc}"}), 400
-            except Exception as exc:
-                logger.warning("Web-SSH connect error: %s", exc)
-                return jsonify({"success": False, "error": f"Could not connect: {exc}"}), 400
-
-            transport = ssh_client.get_transport()
-            transport.set_keepalive(30)
-            channel = transport.open_session()
-            channel.get_pty(term="xterm-256color", width=120, height=32)
-            channel.invoke_shell()
-
-            session_id = uuid.uuid4().hex
-            session = WebSSHSession(
-                session_id=session_id,
-                token=token_value,
-                client_ip=client_ip,
-                ssh_client=ssh_client,
-                transport=transport,
-                channel=channel,
-                host=host,
-                port=int(port),
-                username=username,
-                created_at=datetime.now(),
-                last_activity=datetime.now(),
-            )
-            with webssh_lock:
-                webssh_sessions[session_id] = session
-
-            def reader() -> None:
-                chan = session.channel
-                try:
-                    while not session.closed:
-                        if chan.recv_ready():
-                            chunk = chan.recv(65536)
-                            if not chunk:
-                                break
-                            text = chunk.decode("utf-8", errors="replace")
-                            with session.lock:
-                                session.buffer += text
-                                if len(session.buffer) > 400_000:
-                                    session.buffer = session.buffer[-200_000:]
-                        elif chan.exit_status_ready():
-                            break
-                        else:
-                            time.sleep(0.02)
-                except Exception as exc:
-                    logger.debug("Web-SSH reader stopped: %s", exc)
-                finally:
-                    session.closed = True
-
-            session.reader = threading.Thread(target=reader, daemon=True, name=f"ssh-{session_id[:6]}")
-            session.reader.start()
-
-            audit("webssh_connect", entry.user_id if entry else client_ip, target=f"{username}@{host}:{port}",
-                  detail=f"session {session_id[:8]}")
-            logger.info("Web-SSH session %s opened: %s@%s:%s", session_id[:8], username, host, port)
-            return jsonify({
-                "success": True,
-                "session_id": session_id,
-                "target": f"{username}@{host}:{port}",
-            })
-
-        def _token_guard(payload: Dict[str, Any]) -> Optional[Any]:
-            """Return an error response if the caller may not use this session."""
-            session_id = str(payload.get("session_id") or "")
-            token_value = str(payload.get("token") or "")
-            session = webssh_sessions.get(session_id)
-            if not session:
-                return jsonify({"success": False, "error": "Session not found or expired."}), 401
-            if session.token not in ("", "none") and token_value != session.token:
-                return jsonify({"success": False, "error": "Session token mismatch."}), 401
-            return None
-
-        @flask_app.route("/api/ssh/read", methods=["POST"])
-        def ssh_read():
-            payload = request.get_json(silent=True) or {}
-            guard = _token_guard(payload)
-            if guard:
-                return guard
-            session = webssh_sessions.get(str(payload.get("session_id")))
-            if session is None:
-                return jsonify({"success": False, "error": "Session expired."}), 401
-            last_index = clamp_int(payload.get("last_index"), 0, 10_000_000, 0)
-            with session.lock:
-                if last_index > len(session.buffer):
-                    last_index = 0
-                chunk = session.buffer[last_index:]
-                new_index = len(session.buffer)
-                closed_now = session.closed and not chunk
-            session.touch()
-            return jsonify({"success": True, "data": chunk, "last_index": new_index, "closed": closed_now})
-
-        @flask_app.route("/api/ssh/write", methods=["POST"])
-        def ssh_write():
-            payload = request.get_json(silent=True) or {}
-            guard = _token_guard(payload)
-            if guard:
-                return guard
-            session = webssh_sessions.get(str(payload.get("session_id")))
-            if session is None:
-                return jsonify({"success": False, "error": "Session expired."}), 401
-            data = str(payload.get("data") or "")
-            if len(data) > 8192:
-                return jsonify({"success": False, "error": "Payload too large."}), 413
-            if session.closed:
-                return jsonify({"success": False, "error": "Channel closed."}), 410
-            try:
-                session.channel.send(data)
-            except Exception as exc:
-                return jsonify({"success": False, "error": f"Send failed: {exc}"}), 500
-            session.touch()
-            return jsonify({"success": True})
-
-        @flask_app.route("/api/ssh/resize", methods=["POST"])
-        def ssh_resize():
-            payload = request.get_json(silent=True) or {}
-            guard = _token_guard(payload)
-            if guard:
-                return guard
-            session = webssh_sessions.get(str(payload.get("session_id")))
-            if session is None:
-                return jsonify({"success": False, "error": "Session expired."}), 401
-            cols = clamp_int(payload.get("cols"), 20, 400, 120)
-            rows = clamp_int(payload.get("rows"), 5, 200, 32)
-            try:
-                session.channel.resize_pty(width=cols, height=rows)
-            except Exception:
-                pass
-            session.touch()
-            return jsonify({"success": True})
-
-        @flask_app.route("/api/ssh/disconnect", methods=["POST"])
-        def ssh_disconnect():
-            payload = request.get_json(silent=True) or {}
-            session_id = str(payload.get("session_id") or "")
-            session = webssh_sessions.get(session_id)
-            if not session:
-                return jsonify({"success": True})
-            token_value = str(payload.get("token") or "")
-            if session.token not in ("", "none") and token_value != session.token:
-                return jsonify({"success": False, "error": "Session token mismatch."}), 401
-            _close_session(session_id, reason="user requested")
-            return jsonify({"success": True})
-
-        return flask_app
-
+        """Build the Flask app (used by the bot's startup hook)."""
+        WEBSSH_BACKEND.start_cleanup_loop()
+        return unix_terminal.create_app(WEBSSH_BACKEND)
 
     def await_webssh_thread(func: Callable[[], Any], timeout: int = 30) -> Any:
-        """Run a blocking SSH connect on a worker thread with a hard timeout."""
-        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+        """Run a blocking terminal helper on a worker thread with a hard timeout."""
+        from concurrent.futures import ThreadPoolExecutor
 
-        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="ssh-connect") as pool:
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="webssh-helper") as pool:
             future = pool.submit(func)
-            try:
-                return future.result(timeout=timeout)
-            except FutureTimeout:
-                raise TimeoutError("SSH connection attempt timed out")
+            return future.result(timeout=timeout)
 
-    _webssh_thread = threading.Thread(target=_webssh_cleanup_loop, daemon=True, name="webssh-cleanup")
-    _webssh_thread.start()
+else:
+    WEBSSH_BACKEND = None
+    WEBSSH_SETTINGS = None
 
 
 # Backwards-compatibility shims so older helper names keep working.
 def get_vps_data_snapshot() -> Dict[str, List[Dict[str, Any]]]:
     return get_vps_data()
-
 # ═══════════════════════════════════════════════════════════════════════════
 # 8. BOT CORE  (client • events • background workers)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -5811,8 +4916,7 @@ class UnixNodesBot(commands.Bot):
                 if seconds_left <= 0:
                     if EXPIRATION_AUTO_SUSPEND and not vps.get("suspended") and not vps.get("whitelisted"):
                         try:
-                            await run_lxc_command(container, f"stop {shlex.quote(container)}",
-                                                  timeout=120, node_id=vps["node_id"], check=False)
+                            await docker_stop(container, vps["node_id"], timeout=120)
                         except Exception as exc:
                             logger.warning("Auto-suspend failed for %s: %s", container, exc)
                         history = vps.get("suspension_history") or []
@@ -6128,7 +5232,7 @@ async def uptime(ctx: commands.Context) -> None:
 @command_timeout(60)
 async def about(ctx: commands.Context) -> None:
     """Bot information, statistics and links (typewriter intro)."""
-    embed = create_embed(f"About {BOT_NAME}", "LXC container hosting, managed straight from Discord.", COLORS["magic"])
+    embed = create_embed(f"About {BOT_NAME}", "Docker container VPS hosting, managed straight from Discord.", COLORS["magic"])
     add_field(embed, "📦 Version", f"`{BOT_VERSION}`", True)
     add_field(embed, "👨‍💻 Developer", f"`{BOT_DEVELOPER}`", True)
     add_field(embed, "🔧 Prefix", f"`{PREFIX}`", True)
@@ -6929,7 +6033,7 @@ class ManageView(PanelView):
         try:
             current = await container_state(container, vps["node_id"])
             if current == "unknown":
-                self.feedback = "⚠️ Could not read the container state — is LXC reachable?"
+                self.feedback = "⚠️ Could not read the container state — is the Docker Engine reachable?"
             elif action == "start" and current == "running":
                 await run_blocking(patch_vps, container, status="running", suspended=False)
                 self.feedback = "ℹ️ Already running — state refreshed."
@@ -6937,8 +6041,12 @@ class ManageView(PanelView):
                 await run_blocking(patch_vps, container, status="stopped")
                 self.feedback = "ℹ️ Already stopped — state refreshed."
             else:
-                await run_lxc_command(container, f"{action} {shlex.quote(container)}",
-                                      timeout=180 if action != "stop" else 120, node_id=vps["node_id"])
+                if action == "start":
+                    await docker_start(container, vps["node_id"], timeout=180)
+                elif action == "stop":
+                    await docker_stop(container, vps["node_id"], timeout=120)
+                else:
+                    await docker_restart(container, vps["node_id"])
                 await run_blocking(patch_vps, container, status="running" if action in ("start", "restart") else "stopped")
                 self.feedback = f"✅ `{verb.lower()}` completed successfully."
 
@@ -7141,7 +6249,7 @@ class ManageView(PanelView):
         target_node_id = int(node_id)
         panel = ProgressPanel(
             interaction.channel, f"Reinstalling {vps['container_name']}",
-            ["Destroy current container", "Create fresh container", "Apply limits & permissions",
+            ["Stop & wipe container", "Create fresh container", "Apply limits & volumes",
              "Install SSH access", "Restore port forwards", "Deliver credentials"],
             subtitle=f"{os_emoji} {os_name} • Node: {node.get('name', target_node_id)} • This takes 1–4 minutes.",
             color=COLORS["danger"],
@@ -7166,16 +6274,14 @@ class ManageView(PanelView):
         new_password = generate_strong_password()
 
         try:
-            await step(0, "deleted", run_lxc_command(
-                container, f"delete {shlex.quote(container)} --force", timeout=180,
-                node_id=old_node_id, check=False))
+            await step(0, "deleted", docker_remove(container, old_node_id, volumes=True))
             await step(1, "created", provision_container(
                 container, os_version, target_node_id,
                 ram_gb=ram_gb, cpu=cpu, disk_gb=disk_gb))
             # Update the node mapping before restoring forwards, as forward helpers
             # resolve the VPS's node from the database.
             await run_blocking(patch_vps, container, node_id=target_node_id, os_version=os_version)
-            await panel.step(2, "done", "nesting + privileged + fuse")
+            await panel.step(2, "done", "cgroups + volume + caps")
             ssh_ok, ssh_note = await step(3, "ssh ready", configure_ssh(container, target_node_id, new_password))
             if not ssh_ok:
                 raise RuntimeError(f"SSH setup failed after reinstall: {ssh_note}")
@@ -7362,7 +6468,7 @@ if WEBSSH_ENABLED:
             super().__init__(author_id, timeout=900)
             self.token = token
             self.label = label
-            entry = webssh_tokens.get(token)
+            entry = WEBSSH_BACKEND.tokens.get(token)
             locked = bool(entry and entry.pin_required)
             self.add_button(
                 label="Change PIN" if locked else "Add a PIN",
@@ -7374,7 +6480,7 @@ if WEBSSH_ENABLED:
                             callback=self._close)
 
         async def _set_pin(self, interaction: discord.Interaction) -> None:
-            entry = webssh_tokens.get(self.token)
+            entry = WEBSSH_BACKEND.tokens.get(self.token)
             if not entry or not entry.is_valid():
                 await interaction.response.send_message(
                     embed=warning_embed("Link Expired",
@@ -7389,13 +6495,13 @@ if WEBSSH_ENABLED:
 
         def apply_pin(self, pin: str) -> Tuple[bool, str]:
             """Hash + attach the PIN to the token that is already in the user's DMs."""
-            entry = webssh_tokens.get(self.token)
+            entry = WEBSSH_BACKEND.tokens.get(self.token)
             if not entry or not entry.is_valid():
                 return False, f"Generate a new link from `{PREFIX}manage` -> **Web SSH**."
             entry.pin_hash = hash_password(pin)
             entry.pin_attempts = 0
             entry.unlock_keys.clear()
-            _save_webssh_token(self.token)
+            WEBSSH_BACKEND._persist(entry)
             self._relabel()
             audit("webssh_pin_set", entry.user_id, target=self.label)
             return True, (f"`{self.label}` now asks for the PIN **once per browser** before the terminal opens.\n"
@@ -7627,7 +6733,7 @@ class AdvancedView(PanelView):
                 discord.SelectOption(label="Recreate port forwards", value="repair",
                                      description="Rebuild every proxy device"),
                 discord.SelectOption(label="Resync status", value="resync",
-                                     description="Read the true state from LXC and update the bot"),
+                                     description="Read the true state from Docker and update the bot"),
                 discord.SelectOption(label="Show processes", value="processes",
                                      description="Top processes running inside the VPS"),
                 discord.SelectOption(label="Show network", value="network",
@@ -7693,19 +6799,22 @@ class AdvancedView(PanelView):
         await safe_defer(interaction, ephemeral=True)
         container, node_id = self.vps["container_name"], self.vps["node_id"]
         try:
-            was_running = (await container_state(container, node_id)) == "running"
-            if was_running:
-                await run_lxc_command(container, f"stop {shlex.quote(container)}", timeout=120, node_id=node_id)
-            await apply_lxc_config(container, node_id)
-            await run_lxc_command(container, f"start {shlex.quote(container)}", timeout=180, node_id=node_id)
+            # Docker fixes capabilities, PID limits, sysctls and published ports
+            # at creation time, so "re-applying" the policy means recreating the
+            # container from the same image and the same persistent volume.
+            await apply_container_policy(container, node_id)
             await apply_internal_permissions(container, node_id)
             restored = await recreate_port_forwards(container)
             await run_blocking(patch_vps, container, status="running", suspended=False)
             audit("vps_permissions", interaction.user.id, target=container)
             await interaction.followup.send(
                 embed=success_embed("Permissions Re-applied",
-                                    f"Nesting, privileged mode, FUSE and kernel modules are active.\n"
-                                    f"🔌 {restored} port forward(s) restored."),
+                                    f"Security policy re-applied: dropped capabilities, PID limit "
+                                    f"`{self.vps.get('pid_limit') or 'default'}`, no-new-privileges "
+                                    f"`{'on' if unix_config.DOCKER_NO_NEW_PRIVILEGES else 'off'}` "
+                                    "and the namespaced sysctls.\n"
+                                    f"🔌 {restored} port forward(s) restored.\n"
+                                    "_The persistent volume was kept — no data was touched._"),
                 ephemeral=True)
         except Exception as exc:
             await interaction.followup.send(embed=error_embed("Failed", truncate_text(exc, 800)), ephemeral=True)
@@ -7763,7 +6872,7 @@ class AdvancedView(PanelView):
         if self.vps.get("suspended"):
             await safe_defer(interaction, ephemeral=True)
             try:
-                await run_lxc_command(container, f"start {shlex.quote(container)}", timeout=180, node_id=node_id)
+                await docker_start(container, node_id, timeout=180)
                 await apply_internal_permissions(container, node_id)
                 await recreate_port_forwards(container)
             except Exception as exc:
@@ -7788,7 +6897,7 @@ class AdvancedView(PanelView):
         # raised InteractionResponded. safe_defer() only defers when still allowed.
         await safe_defer(interaction, ephemeral=True)
         try:
-            await run_lxc_command(container, f"stop {shlex.quote(container)}", timeout=120, node_id=node_id)
+            await docker_stop(container, node_id, timeout=120)
         except Exception as exc:
             logger.debug("suspend stop failed: %s", exc)
         history = list(self.vps.get("suspension_history") or [])
@@ -7864,43 +6973,32 @@ class CloneModal(discord.ui.Modal, title="Clone container"):
             return
         await interaction.response.defer(ephemeral=True)
         panel = ProgressPanel(interaction.channel, f"Cloning {from_name} → {target}",
-                              ["Copy container", "Apply permissions", "Boot clone", "Register in bot"],
+                              ["Copy persistent volume", "Reserve SSH port",
+                               "Create clone container", "Register in bot"],
                               color=COLORS["magic"])
         await panel.start()
+        pump = PanelPump(panel, 4)
+        pump.start()
+
         try:
-            await panel.step(0, "running")
-            await run_lxc_command(from_name, f"copy {shlex.quote(from_name)} {shlex.quote(target)}",
-                                  timeout=900, node_id=self.vps["node_id"])
-            await panel.step(0, "done")
-            await panel.step(1, "running")
-            await apply_lxc_config(target, self.vps["node_id"])
-            await panel.step(1, "done")
-            await panel.step(2, "running")
-            await run_lxc_command(target, f"start {shlex.quote(target)}", timeout=180, node_id=self.vps["node_id"])
-            await apply_internal_permissions(target, self.vps["node_id"])
-            await panel.step(2, "done")
-            await panel.step(3, "running")
-            clone = dict(self.vps)
-            clone.update({
-                "id": await run_blocking(next_vps_id),
-                "container_name": target,
-                "status": "running",
-                "created_at": datetime.now().isoformat(),
-                "shared_with": [],
-                "suspension_history": [],
-                "suspended": False,
-                "whitelisted": False,
-                "is_public": False,
-            })
-            await run_blocking(upsert_vps, clone)
-            await panel.step(3, "done")
+            # Docker has no `lxc copy`: the persistent volume is duplicated with a
+            # short-lived helper container, then a second container is created
+            # from the same image with its own ports and its own root password.
+            result = await INFRA.clone(from_name, target, owner_id=self.vps["user_id"],
+                                       progress=pump.emit)
+            await pump.stop()
+            self.vps["clone_password"] = result["password"]
+            self.vps["clone_ssh_port"] = result["ssh_host_port"]
         except Exception as exc:
+            await pump.stop(complete=False)
             await panel.finish(final_embed=error_embed("Clone Failed", truncate_text(exc, 700)))
             return
         audit("vps_clone", interaction.user.id, target=target, detail=f"from {from_name}")
         await panel.finish(final_embed=success_embed(
             "Clone Created",
             f"`{target}` is running with the same data as `{from_name}`.\n"
+            f"SSH: `ssh root@{YOUR_SERVER_IP} -p {self.vps.get('clone_ssh_port')}`\n"
+            f"Password: `{self.vps.get('clone_password')}`\n"
             f"Add port forwards from the Ports menu when you need them."))
 
 
@@ -7956,15 +7054,15 @@ async def manage_vps(ctx: commands.Context, user: Optional[discord.Member] = Non
             # Get user's name prefix from Discord
             user_prefix = sanitize_username_for_container(target.name or str(target.id))
             
-            # Get all LXC containers on the host with a timeout to prevent hanging
+            # Get all containers on the host with a timeout to prevent hanging
             try:
-                lxc_containers = await asyncio.wait_for(get_lxc_containers_on_node(1), timeout=15.0)
+                docker_containers = await asyncio.wait_for(get_containers_on_node(1), timeout=15.0)
             except asyncio.TimeoutError:
-                logger.warning("LXC list timed out for user %s, using database VPS only", target.id)
-                lxc_containers = []
+                logger.warning("container list timed out for user %s, using database VPS only", target.id)
+                docker_containers = []
             
             # Find containers matching this user's prefix
-            matching_containers = [c for c in lxc_containers if c.lower().startswith(user_prefix.lower())]
+            matching_containers = [c for c in docker_containers if c.lower().startswith(user_prefix.lower())]
             tracked_names = {v["container_name"] for v in vps_list}
             untracked = [c for c in matching_containers if c not in tracked_names]
             
@@ -8018,16 +7116,20 @@ async def manage_vps(ctx: commands.Context, user: Optional[discord.Member] = Non
 # 10. PROVISIONING FLOWS  (admin create • public self-service • renewal)
 # ═══════════════════════════════════════════════════════════════════════════
 
-OS_OPTIONS: List[Dict[str, str]] = [
-    {"label": "Ubuntu 24.04 LTS (Noble)", "value": "ubuntu:24.04", "emoji": "🟠"},
-    {"label": "Ubuntu 22.04 LTS (Jammy)", "value": "ubuntu:22.04", "emoji": "🟠"},
-    {"label": "Ubuntu 20.04 LTS (Focal)", "value": "ubuntu:20.04", "emoji": "🟠"},
-    {"label": "Debian 13 (Trixie)", "value": "images:debian/13", "emoji": "🔴"},
-    {"label": "Debian 12 (Bookworm)", "value": "images:debian/12", "emoji": "🔴"},
-    {"label": "Debian 11 (Bullseye)", "value": "images:debian/11", "emoji": "🔴"},
-    {"label": "Debian 10 (Buster)", "value": "images:debian/10", "emoji": "🔴"},
-    {"label": "Alpine 3.20 (tiny)", "value": "images:alpine/3.20", "emoji": "🏔️"},
-]
+# v11: the selectable OS list is the Docker image catalogue — the built-in
+# Ubuntu / Debian / Alpine images plus every administrator-approved custom
+# image stored in the `docker_images` table.
+OS_OPTIONS: List[Dict[str, str]] = unix_images.catalogue()
+
+
+def refresh_os_options() -> List[Dict[str, str]]:
+    """Re-read the catalogue (call after an admin adds or removes an image)."""
+    global OS_OPTIONS
+    try:
+        OS_OPTIONS = unix_images.catalogue(INFRA.repo.list_approved_images())
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("could not refresh the image catalogue: %s", exc)
+    return OS_OPTIONS
 
 
 class Responder:
@@ -8134,17 +7236,10 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
         await responder.send(embed=error_embed("Node Missing", f"Node {node_id} no longer exists."), ephemeral=True)
         return None
 
-    steps = [
-        "Reserve VPS identity",
-        "Create LXC container",
-        "Apply CPU / RAM / disk limits",
-        "Configure privileges (Docker ready)",
-        "Boot and harden the guest",
-        "Install SSH + root password",
-        "Expose SSH port",
-        "Register in bot database",
-        "Deliver credentials",
-    ]
+    # The panel mirrors the real transactional pipeline in
+    # unixnodes/services/provisioning.py — every step is reported as it happens
+    # and a failure rolls the whole thing back.
+    steps = list(unix_provisioning.STEPS) + ["Deliver credentials"]
     # Pass the interaction to ProgressPanel for proper deferred interaction handling
     interaction_obj = responder.target if isinstance(responder.target, discord.Interaction) else None
     logger.debug(f"provision_vps: creating ProgressPanel with interaction={interaction_obj is not None}")
@@ -8162,73 +7257,56 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
         return None
 
     password = generate_strong_password()
-    try:
-        logger.debug(f"Step 0: Reserving VPS identity")
-        await panel.step(0, "done", f"`{container}`")
-        
-        logger.debug(f"Step 1: Creating LXC container with os={os_version}")
-        await panel.step(1, "running")
-        try:
-            await provision_container(container, os_version, node_id, ram_gb=ram_gb, cpu=cpu, disk_gb=disk_gb)
-            logger.debug(f"Step 1: Container created successfully")
-        except Exception as e:
-            logger.error(f"Step 1 FAILED: Could not create container: {e}", exc_info=True)
-            raise
-        await panel.step(1, "done")
-        
-        logger.debug(f"Step 2: Applying limits")
-        await panel.step(2, "done", f"{ram_gb}GB / {cpu} vCPU / {disk_gb}GB")
-        logger.debug(f"Step 3: Configuring privileges")
-        await panel.step(3, "done", "nesting • privileged • fuse")
-        logger.debug(f"Step 4: Booting container")
-        await panel.step(4, "done", "sysctl + cgroups ready")
-        
-        logger.debug(f"Step 5: Installing SSH")
-        await panel.step(5, "running")
-        ssh_ok, ssh_note = await configure_ssh(container, node_id, password)
-        logger.debug(f"Step 5: SSH config result: ok={ssh_ok}, note={ssh_note}")
-        await panel.step(5, "done" if ssh_ok else "failed", truncate_text(ssh_note, 60))
-        if not ssh_ok:
-            raise RuntimeError(f"SSH setup failed: {ssh_note}")
+    request = unix_provisioning.ProvisionRequest(
+        owner_id=owner.id, container_name=container, image=os_version,
+        ram_mb=int(ram_gb) * 1024, cpu=float(cpu), storage_gb=int(disk_gb),
+        node_id=int(node_id), pids=int(unix_config.DOCKER_DEFAULT_PID_LIMIT),
+        expiry_days=expiry_days, is_public=bool(is_public),
+        password=password, host_motd=HOST_MOTD)
 
-        # Extended grace period: allow SSH daemon to fully stabilize and accept connections
-        # This prevents "Error reading SSH protocol banner" from paramiko
-        logger.debug(f"Step 5: Waiting 10 seconds for SSH to stabilize")
-        await asyncio.sleep(10)
-        
-        logger.debug(f"Step 6: Creating port forward")
-        await panel.step(6, "running")
-        ssh_port = await create_port_forward(owner.id, container, 22, node_id)
-        logger.debug(f"Step 6: Port forward created: ssh_port={ssh_port}")
-        await panel.step(6, "done" if ssh_port else "failed",
-                         f"host port {ssh_port}" if ssh_port else "no free port")
-        
-        logger.debug(f"Step 7: Saving to database")
-        await panel.step(7, "running")
-        record = build_vps_record(user_id=owner.id, vps_id=vps_id, node_id=node_id, container_name=container,
-                                  ram_gb=ram_gb, cpu=cpu, disk_gb=disk_gb, os_version=os_version,
-                                  password=password, expiry_days=expiry_days, is_public=is_public)
-        await run_blocking(upsert_vps, record)
-        if await run_blocking(get_user_allocation, owner.id) == 0:
-            await run_blocking(allocate_ports, owner.id, 1)
+    pump = PanelPump(panel, len(steps))
+    pump.start()
+    try:
+        # One transactional call covering the whole pipeline: plan → node →
+        # capacity → SSH port reservation → identity → image pull → volume →
+        # container → limits → networking → publish → start → Linux init →
+        # SSH → health check → SSH probe → disk quota → database row.
+        # Any failure rolls everything back (container, volume, port
+        # reservations, quota row and the partial database row), so a failed
+        # deployment can never leave an orphaned container behind.
+        logger.debug("provision_vps: running the transactional pipeline for %s", container)
+        result = await INFRA.provision(request, progress=pump.emit)
+        await pump.stop()
+
+        vps_id = int(result.vps_id)
+        ssh_port = int(result.ssh_host_port)
+        node_id = int(result.node_id)
+        os_version = result.image
+        record = await run_blocking(get_vps_by_container, container) or {}
+        record["port_forwards"] = [{"host_port": ssh_port, "vps_port": 22}]
+        if not record.get("id"):
+            record["id"] = vps_id
+
+        await panel.step(len(steps) - 1, "running")
+        await run_host_motd(container, node_id)
         if is_public:
             await run_blocking(mark_device_vps_created, owner.id)
-        await panel.step(7, "done", "saved")
-        logger.debug(f"Step 7: Database saved")
-        
-        logger.debug(f"Step 8: Delivering credentials")
-        await panel.step(8, "running")
-        await run_host_motd(container, node_id)
-        record["port_forwards"] = [{"host_port": ssh_port, "vps_port": 22}] if ssh_port else []
-        await panel.step(8, "done", "DM sent")
-        logger.debug(f"Step 8: Credentials delivered")
+        if await run_blocking(get_user_allocation, owner.id) == 0:
+            await run_blocking(allocate_ports, owner.id, 1)
+        await panel.step(len(steps) - 1, "done", "DM sent")
     except Exception as exc:
+        await pump.stop(complete=False)
+        cleanup = list(getattr(exc, "cleanup", []) or [])
         logger.error("Provisioning failed for %s: %s", container, exc, exc_info=True)
         audit("vps_create", requester_id or owner.id, target=container, detail=str(exc), success=False)
-        await panel.finish(final_embed=error_embed(
-            "Deployment Failed",
-            f"`{container}` could not be created.\n\n**Reason:** {truncate_text(exc, 600)}\n\n"
-            f"Cleanup hint: an admin can run `{PREFIX}lxc-list` and `{PREFIX}delete-vps` to remove leftovers."))
+        body = (f"`{container}` could not be created.\n\n"
+                f"**Reason:** {truncate_text(exc, 600)}")
+        if cleanup:
+            body += "\n\n**Rolled back:** " + ", ".join(f"`{item}`" for item in cleanup)
+        else:
+            body += ("\n\n_Rollback ran automatically — no container, volume or port "
+                     "reservation was left behind._")
+        await panel.finish(final_embed=error_embed("Deployment Failed", body))
         return None
 
     audit("vps_create", requester_id or owner.id, target=container,
@@ -9208,7 +8286,7 @@ async def system_status(ctx: commands.Context) -> None:
               f"DB `{fmt_bytes(db_size)}`\nBackups `{len(list(DB_BACKUP_DIR.glob('vps_*.db')))}`\n"
               f"Audit rows `{audit_rows}`", True)
     add_field(embed, "🌐 Web terminal",
-              f"{'🟢 enabled' if WEBSSH_ENABLED else '⛔ disabled'}\nSessions `{len(webssh_sessions) if WEBSSH_ENABLED else 0}`", True)
+              f"{'🟢 enabled' if WEBSSH_ENABLED else '⛔ disabled'}\nSessions `{len(WEBSSH_BACKEND.sessions) if WEBSSH_ENABLED else 0}`", True)
     add_field(embed, "🎛️ Workers",
               "Autosave ✅\nExpiry monitor ✅\nHost snapshots ✅\nPresence rotation ✅", True)
     for chunk in chunk_lines(node_lines, char_limit=950, max_lines=6):
@@ -9354,29 +8432,20 @@ async def resize_vps(ctx: commands.Context, container_name: str, ram_gb: int = 0
                           subtitle=f"→ {new_ram} GB RAM • {new_cpu} vCPU • {new_disk} GB disk")
     await panel.start()
     try:
-        if was_running:
-            await panel.step(0, "running")
-            await run_lxc_command(container_name, f"stop {shlex.quote(container_name)}", timeout=150,
-                                  node_id=vps["node_id"], check=False)
-            await panel.step(0, "done")
-        else:
-            await panel.step(0, "skipped", "container was stopped")
+        await panel.step(0, "running", "container is stopped as part of the recreate")
+        await panel.step(0, "done")
 
+        # Docker fixes memory / CPU / PID limits and published ports when the
+        # container is created, so a resize recreates the container from the same
+        # image with the same persistent volume — no customer data is touched.
         await panel.step(1, "running")
-        await run_lxc_argv(container_name, ["config", "set", container_name, "limits.memory", f"{new_ram * 1024}MB"],
-                           node_id=vps["node_id"])
-        await run_lxc_argv(container_name, ["config", "set", container_name, "limits.cpu", str(new_cpu)],
-                           node_id=vps["node_id"])
-        if new_disk != clamp_int(str(vps.get("storage", "10")).replace("GB", ""), 5, 5000, 10):
-            await run_lxc_argv(container_name,
-                               ["config", "device", "set", container_name, "root", f"size={new_disk}GB"],
-                               node_id=vps["node_id"], check=False)
-        await panel.step(1, "done")
+        outcome = await INFRA.resize(container_name,
+                                     ram_mb=new_ram * 1024, cpu=float(new_cpu),
+                                     storage_gb=new_disk)
+        await panel.step(1, "done", f"{outcome.get('state', 'running')}")
 
         await panel.step(2, "running" if was_running else "skipped")
         if was_running:
-            await run_lxc_command(container_name, f"start {shlex.quote(container_name)}", timeout=180,
-                                  node_id=vps["node_id"])
             await apply_internal_permissions(container_name, vps["node_id"])
             await panel.step(2, "done")
 
@@ -9394,8 +8463,18 @@ async def resize_vps(ctx: commands.Context, container_name: str, ram_gb: int = 0
     audit("vps_resize", ctx.author.id, target=container_name,
           detail=f"{new_ram}GB/{new_cpu}cpu/{new_disk}GB")
 
+    quota = (outcome or {}).get("quota") or {}
     embed = success_embed("Resources Updated",
                           f"`{container_name}` now has **{new_ram} GB RAM**, **{new_cpu} vCPU** and **{new_disk} GB disk**.")
+    if quota:
+        if quota.get("enforced"):
+            add_field(embed, "💾 Storage quota",
+                      f"Hard limit enforced by **{quota.get('method')}**.", False)
+        else:
+            add_field(embed, "💾 Storage quota",
+                      f"**Not enforced** on this host ({quota.get('method')}). "
+                      f"Usage is monitored and reported, not capped.\n_{quota.get('detail') or ''}_",
+                      False)
     add_field(embed, "ℹ️ Filesystem", "Run `resize2fs /` inside the container to grow the filesystem immediately.", False)
     await panel.finish(final_embed=embed)
 
@@ -9415,8 +8494,10 @@ async def suspend_vps(ctx: commands.Context, container_name: str, *, reason: str
         return
 
     message = await thinking(ctx.channel, "Suspending", f"Stopping `{container_name}`…")
-    await run_lxc_command(container_name, f"stop {shlex.quote(container_name)}", timeout=150,
-                          node_id=vps["node_id"], check=False)
+    try:
+        await docker_stop(container_name, vps["node_id"], timeout=150)
+    except Exception as exc:
+        logger.warning("suspend stop failed for %s: %s", container_name, exc)
     history = list(vps.get("suspension_history") or [])
     history.append({"time": datetime.now(timezone.utc).isoformat(),
                     "reason": sanitize_reason(reason), "by": str(ctx.author.id)})
@@ -9456,8 +8537,7 @@ async def unsuspend_vps(ctx: commands.Context, container_name: str) -> None:
         await run_blocking(patch_vps, container_name, suspended=False)
         await panel.step(0, "done")
         await panel.step(1, "running")
-        await run_lxc_command(container_name, f"start {shlex.quote(container_name)}", timeout=180,
-                              node_id=vps["node_id"])
+        await docker_start(container_name, vps["node_id"], timeout=180)
         await panel.step(1, "done")
         await panel.step(2, "running")
         await apply_internal_permissions(container_name, vps["node_id"])
@@ -9497,8 +8577,7 @@ async def restart_vps(ctx: commands.Context, container_name: str) -> None:
     await panel.start()
     try:
         await panel.step(0, "running")
-        await run_lxc_command(container_name, f"restart {shlex.quote(container_name)}", timeout=180,
-                             node_id=vps["node_id"], check=False)
+        await docker_restart(container_name, vps["node_id"])
         await panel.step(0, "done")
         await panel.step(1, "running")
         await apply_internal_permissions(container_name, vps["node_id"])
@@ -9558,15 +8637,19 @@ async def delete_vps(ctx: commands.Context, user: discord.User, target: str = No
         return
 
     message = await thinking(ctx.channel, "Deleting container", f"Destroying `{container}`…")
-    await run_lxc_command(container, f"delete {shlex.quote(container)} --force", timeout=240,
-                          node_id=vps["node_id"], check=False)
-    await run_blocking(delete_vps_row, container)
+    # Removes the container, its persistent volume, every port reservation, the
+    # storage-quota row and the database record — in one transactional call with
+    # rollback, so nothing can be left orphaned.
+    outcome = await INFRA.delete(container, delete_volume=True, delete_backups=False)
     audit("vps_delete", ctx.author.id, target=container, detail=sanitize_reason(reason))
 
     embed = success_embed("Container Deleted", f"`{container}` was removed.", thumbnail=False)
     add_field(embed, "👤 Owner", user.mention, True)
     add_field(embed, "🆔 VPS ID", f"`#{vps.get('id')}`", True)
     add_field(embed, "📝 Reason", sanitize_reason(reason), False)
+    if outcome.get("errors"):
+        add_field(embed, "⚠️ Cleanup notes",
+                  truncate_text("\n".join(str(e) for e in outcome["errors"]), 600), False)
     await _safe_edit(message, embed=embed)
 
     if ctx.guild:
@@ -9682,24 +8765,19 @@ async def apply_permissions(ctx: commands.Context, container_name: str) -> None:
         return
     panel = ProgressPanel(ctx.channel, f"Applying permissions to {container_name}",
                           ["Stop container", "Write security profile", "Boot container",
-                           "Guest kernel tuning", "Restore port forwards"])
+                           "Guest checks", "Restore port forwards"])
     await panel.start()
     try:
-        was_running = (await container_state(container_name, vps["node_id"])) == "running"
-        if was_running:
-            await panel.step(0, "running")
-            await run_lxc_command(container_name, f"stop {shlex.quote(container_name)}", timeout=150,
-                                  node_id=vps["node_id"], check=False)
-            await panel.step(0, "done")
-        else:
-            await panel.step(0, "skipped", "already stopped")
+        await panel.step(0, "running")
+        await panel.step(0, "done")
+        # Docker fixes capabilities, PID limits, sysctls and published ports at
+        # creation time, so re-applying the policy means recreating the container
+        # from the same image and the same persistent volume.
         await panel.step(1, "running")
-        await apply_lxc_config(container_name, vps["node_id"])
+        await apply_container_policy(container_name, vps["node_id"])
         await panel.step(1, "done")
         await panel.step(2, "running")
-        await run_lxc_command(container_name, f"start {shlex.quote(container_name)}", timeout=180,
-                              node_id=vps["node_id"])
-        await panel.step(2, "done")
+        await panel.step(2, "done", "recreated with the same volume")
         await panel.step(3, "running")
         await apply_internal_permissions(container_name, vps["node_id"])
         await panel.step(3, "done")
@@ -9712,7 +8790,13 @@ async def apply_permissions(ctx: commands.Context, container_name: str) -> None:
     await run_blocking(patch_vps, container_name, status="running", suspended=False)
     audit("vps_permissions", ctx.author.id, target=container_name)
     await panel.finish(final_embed=success_embed(
-        "Permissions Applied", f"`{container_name}` is Docker-ready (nesting, privileged, FUSE, kernel modules)."))
+        "Permissions Applied",
+        f"`{container_name}` was recreated with the platform security profile:\n"
+        f"• privileged mode **off**\n"
+        f"• {len(unix_security.cap_drop_list())} capabilities dropped\n"
+        f"• PID limit `{vps.get('pid_limit') or unix_config.DOCKER_DEFAULT_PID_LIMIT}`\n"
+        f"• no-new-privileges `{'on' if unix_config.DOCKER_NO_NEW_PRIVILEGES else 'off'}`\n"
+        f"• persistent volume preserved"))
 
 
 @bot.command(name="repair-ports", aliases=["fix-ports"])
@@ -9720,7 +8804,7 @@ async def apply_permissions(ctx: commands.Context, container_name: str) -> None:
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
 async def repair_ports(ctx: commands.Context, container_name: str) -> None:
-    """Rebuild every proxy device for a container."""
+    """Re-publish every reserved port on a container."""
     vps = await run_blocking(get_vps_by_container, container_name)
     if not vps:
         await ctx.send(embed=error_embed("Not Found", f"No container named `{container_name}`."))
@@ -9737,11 +8821,12 @@ async def repair_ports(ctx: commands.Context, container_name: str) -> None:
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
 async def migrate_vps(ctx: commands.Context, container_name: str, target_node_id: int) -> None:
     """
-    Copy a container to another node, then remove the local copy.
+    Move a VPS to another Docker node, then remove the source copy.
 
-    Note: this uses `lxc copy` from the *source* node, so both nodes must be
-    able to reach each other (or use a shared/remote LXD remote). Use
-    `!node` to register the remote first.
+    Docker engines cannot copy a container to each other, so the persistent
+    volume is archived on the source node, streamed to the target node and
+    restored there; the container is then re-created on the target with fresh
+    ports and a new root password.  Use `!node` to register the target first.
     """
     vps = await run_blocking(get_vps_by_container, container_name)
     target = await run_blocking(get_node, target_node_id)
@@ -9761,44 +8846,27 @@ async def migrate_vps(ctx: commands.Context, container_name: str, target_node_id
         return
 
     panel = ProgressPanel(ctx.channel, f"Migrating {container_name} → {target['name']}",
-                          ["Stop source", "Copy to target", "Delete source", "Boot on target",
-                           "Re-register node", "Restore forwards"])
+                          ["Archive source volume", "Transfer archive", "Restore on target",
+                           "Create container", "Delete source", "Update database"])
     await panel.start()
     source_node = vps["node_id"]
+    pump = PanelPump(panel, 6)
+    pump.start()
+
     try:
-        await panel.step(0, "running")
-        await run_lxc_command(container_name, f"stop {shlex.quote(container_name)}", timeout=150,
-                              node_id=source_node, check=False)
-        await panel.step(0, "done")
-        await panel.step(1, "running")
-        temp_name = f"{container_name}-migrating"
-        await run_lxc_command(container_name,
-                              f"copy {shlex.quote(container_name)} {shlex.quote(temp_name)} -s {shlex.quote(DEFAULT_STORAGE_POOL)}",
-                              timeout=1800, node_id=source_node)
-        await run_lxc_command(temp_name, f"delete {shlex.quote(container_name)} --force", timeout=240,
-                              node_id=source_node, check=False)
-        await run_lxc_command(temp_name, f"rename {shlex.quote(temp_name)} {shlex.quote(container_name)}",
-                              timeout=120, node_id=target_node_id)
-        await panel.step(1, "done")
-        await panel.step(2, "done")
-        await panel.step(3, "running")
-        await apply_lxc_config(container_name, target_node_id)
-        await run_lxc_command(container_name, f"start {shlex.quote(container_name)}", timeout=240,
-                              node_id=target_node_id)
-        await apply_internal_permissions(container_name, target_node_id)
-        await panel.step(3, "done")
-        await panel.step(4, "running")
-        await run_blocking(patch_vps, container_name, node_id=target_node_id, status="running")
-        await panel.step(4, "done")
-        await panel.step(5, "running")
-        restored = await recreate_port_forwards(container_name)
-        await panel.step(5, "done", f"{restored} forward(s)")
+        result = await INFRA.migrate(container_name, int(target_node_id), progress=pump.emit)
+        await pump.stop()
     except Exception as exc:
+        await pump.stop(complete=False)
         await panel.finish(final_embed=error_embed("Migration Failed", truncate_text(exc, 800)))
         return
     audit("vps_migrate", ctx.author.id, target=container_name, detail=f"{source_node} → {target_node_id}")
-    await panel.finish(final_embed=success_embed("Migration Complete",
-                                                 f"`{container_name}` now runs on **{target['name']}**."))
+    new_port = await run_blocking(get_ssh_host_port, container_name) or "?"
+    await panel.finish(final_embed=success_embed(
+        "Migration Complete",
+        f"`{container_name}` now runs on **{target['name']}**.\n"
+        f"SSH: `ssh root@{YOUR_SERVER_IP} -p {new_port}`\n"
+        f"Password: `{result['password']}`"))
 
 # ── 11.3 Diagnostics ─────────────────────────────────────────────────────────
 
@@ -9826,27 +8894,44 @@ async def exec_command(ctx: commands.Context, container_name: str, *, command: s
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="lxc-list", aliases=["containers"])
+@bot.command(name="lxc-list", aliases=["containers", "docker-list", "docker-ps"])
 @is_admin()
 @with_typing
 @command_timeout(90)
 async def lxc_list(ctx: commands.Context, node_id: int = None) -> None:
-    """Raw LXC inventory for a node (defaults to the local node)."""
+    """
+    Raw container inventory for a node (defaults to the local node).
+
+    The command name is unchanged for compatibility; the data now comes from the
+    Docker Engine API instead of `lxc list`.
+    """
     node = await run_blocking(get_node, node_id) if node_id else await run_blocking(get_local_node)
     if not node:
         await ctx.send(embed=error_embed("Node Not Found", "That node does not exist."))
         return
     message = await thinking(ctx.channel, "Listing containers", f"Reading state on `{node['name']}`")
     try:
-        output = await run_lxc_command("", "list", timeout=60, node_id=node["id"])
+        client = docker_client(node["id"])
+        items = await run_blocking(unix_ctr.list_managed, client)
     except Exception as exc:
         await _safe_edit(message, embed=error_embed("List Failed", truncate_text(exc, 700)))
         return
     embed = create_embed(f"Containers · {node['name']}", f"Live inventory on <t:{int(time.time())}:R>",
                          COLORS["node"], thumbnail=False)
-    lines = output.splitlines()
-    for chunk in chunk_lines(lines[:60], char_limit=950, max_lines=40):
-        add_field(embed, "lxc list", safe_code_block(chunk, max_chars=900))
+    header = f"{'NAME':<26} {'STATE':<10} {'IMAGE':<26} {'ID':<13} {'OWNER'}"
+    lines = [header, "-" * len(header)]
+    for item in items[:60]:
+        lines.append(f"{str(item.get('name'))[:25]:<26} {str(item.get('status'))[:9]:<10} "
+                     f"{str(item.get('image'))[:25]:<26} {str(item.get('id')):<13} "
+                     f"{item.get('owner') or '-'}")
+    if not items:
+        lines.append("(no managed containers on this node)")
+    for chunk in chunk_lines(lines, char_limit=950, max_lines=40):
+        add_field(embed, "docker ps", safe_code_block(chunk, max_chars=900))
+    running = sum(1 for i in items if str(i.get("status")) == "running")
+    add_field(embed, "Totals",
+              f"`{len(items)}` managed • `{running}` running • `{len(items) - running}` stopped",
+              False)
     await _safe_edit(message, embed=embed)
 
 
@@ -9913,7 +8998,7 @@ async def vps_network(ctx: commands.Context, container_name: str) -> None:
     else:
         add_field(embed, "🔌 Published", "No port forwards yet.", False)
     if vps:
-        add_field(embed, "🖥️ Node", f"`{vps['node_id']}` • bridge `{LXC_BRIDGE}`", True)
+        add_field(embed, "🖥️ Node", f"`{vps['node_id']}` • `{unix_networking.BRIDGE_NAME}`", True)
     await _safe_edit(message, embed=embed)
 
 
@@ -9976,7 +9061,7 @@ async def vps_password(ctx: commands.Context, container_name: str = None) -> Non
 @with_typing
 @command_timeout(90)
 async def node_check(ctx: commands.Context, node_id: int = None) -> None:
-    """Deep node health check: connectivity, storage pools, capacity."""
+    """Deep node health check: Docker engine, volumes, quota support, capacity."""
     node = await run_blocking(get_node, node_id) if node_id else await run_blocking(get_local_node)
     if not node:
         await ctx.send(embed=error_embed("Node Not Found", "That node does not exist."))
@@ -9993,13 +9078,30 @@ async def node_check(ctx: commands.Context, node_id: int = None) -> None:
                   f"RAM {gradient_bar(float(stats.get('ram') or 0), 100, 8)}\n"
                   f"Disk {gradient_bar(float(stats.get('disk_pct') or 0), 100, 8)} `{stats.get('disk')}`", True)
         try:
-            pools = await run_lxc_command("", "storage list", timeout=40, node_id=node["id"])
-            for chunk in chunk_lines(pools.splitlines(), char_limit=950, max_lines=10):
-                add_field(embed, "💾 Storage pools", safe_code_block(chunk, max_chars=900))
+            detail = await INFRA.node_status(int(node["id"]))
+            managed = detail.get("managed") or {}
+            ram_gb = (detail.get("ram_total") or 0) / 1024 ** 3
+            add_field(embed, "🐳 Engine",
+                      f"Docker `{detail.get('docker_version') or '?'}`\n"
+                      f"Driver `{detail.get('storage_driver') or '?'}`\n"
+                      f"{detail.get('operating_system') or '?'} • kernel `{detail.get('kernel') or '?'}`\n"
+                      f"{detail.get('cpu_count') or 0} vCPU • {ram_gb:.1f} GiB RAM\n"
+                      f"{managed.get('running', 0)} running / {managed.get('stopped', 0)} stopped", True)
+            quota = await INFRA.node_quota_support(int(node["id"]))
+            if quota.get("supported"):
+                add_field(embed, "💾 Storage quotas",
+                          f"Enforced by **{quota.get('method')}** on `{quota.get('filesystem')}`.", False)
+            else:
+                add_field(embed, "💾 Storage quotas",
+                          f"**Not enforceable** on this host ({quota.get('method')}).\n"
+                          f"_{quota.get('detail') or 'Per-VPS disk limits are monitored, not capped.'}_",
+                          False)
         except Exception as exc:
-            add_field(embed, "💾 Storage pools", f"Unavailable: {truncate_text(exc, 200)}")
+            add_field(embed, "💾 Storage quotas", f"Unavailable: {truncate_text(exc, 200)}")
         if not node["is_local"]:
-            add_field(embed, "🔗 Endpoint", f"`{node.get('url')}`", False)
+            transport = str(node.get("transport") or "ssh")
+            add_field(embed, "🔗 Endpoint",
+                      f"`{transport}` → `{node.get('docker_host') or node.get('url')}`", False)
     else:
         add_field(embed, "⚠️ Status", "Node is offline — remote commands will fail until it returns.", False)
     embed.set_footer(text=f"{beat()} {brand_footer()}", icon_url=BOT_ICON_URL or None)
@@ -10192,19 +9294,12 @@ async def vps_delete(ctx: commands.Context, user: discord.User) -> None:
     try:
         # Stop container if running
         try:
-            node_id = selected_vps.get("node_id", 1)
-            await run_lxc_command(
-                container_name,
-                f"stop {shlex.quote(container_name)}",
-                timeout=60,
-                node_id=node_id,
-                check=False
-            )
-        except Exception:
-            pass
-
-        # Delete from database
-        await run_blocking(delete_vps_row, container_name)
+            # Removes the container, its volume, its port reservations and the
+            # database row in one transactional call.
+            await INFRA.delete(container_name, delete_volume=True, delete_backups=False)
+        except Exception as exc:
+            logger.warning("could not fully delete %s: %s", container_name, exc)
+            await run_blocking(delete_vps_row, container_name)
 
         # Notify user
         try:
@@ -10276,15 +9371,9 @@ async def vps_suspend(ctx: commands.Context, user: discord.User, *, reason: str 
     try:
         # Stop container
         try:
-            await run_lxc_command(
-                container_name,
-                f"stop {shlex.quote(container_name)}",
-                timeout=60,
-                node_id=selected_vps.get("node_id", 1),
-                check=False
-            )
-        except Exception:
-            pass
+            await docker_stop(container_name, selected_vps.get("node_id", 1), timeout=60)
+        except Exception as exc:
+            logger.debug("vps-suspend stop failed for %s: %s", container_name, exc)
 
         # Mark as suspended in database
         await run_blocking(patch_vps, container_name, suspended=True)
@@ -10450,8 +9539,7 @@ async def stop_all_vps(ctx: commands.Context) -> None:
     stopped, failed = [], []
     for vps in running:
         try:
-            await run_lxc_command(vps["container_name"], f"stop {shlex.quote(vps['container_name'])}",
-                                  timeout=120, node_id=vps["node_id"], check=False)
+            await docker_stop(vps["container_name"], vps["node_id"], timeout=120)
             await run_blocking(patch_vps, vps["container_name"], status="stopped")
             stopped.append(vps)
         except Exception as exc:
@@ -10487,19 +9575,19 @@ async def stop_all_vps(ctx: commands.Context) -> None:
 @command_timeout(120)
 async def show_all_vps(ctx: commands.Context) -> None:
     """
-    Show ALL LXC containers on the host with Discord user assignments.
+    Show ALL managed containers on the host with Discord user assignments.
     
-    Highlights orphaned containers (exist on host but not in bot database).
+    Highlights orphaned containers (exist on the engine but not in the bot database).
     Shows each container's owner, status, and whether it's tracked by the bot.
     """
-    message = await thinking(ctx.channel, "Scanning host", "Fetching all LXC containers…")
+    message = await thinking(ctx.channel, "Scanning host", "Fetching all containers…")
     
     try:
         # Get all containers on the local node with timeout
         try:
-            lxc_containers = await asyncio.wait_for(get_lxc_containers_on_node(1), timeout=15.0)
+            lxc_containers = await asyncio.wait_for(get_containers_on_node(1), timeout=15.0)
         except asyncio.TimeoutError:
-            await _safe_edit(message, embed=error_embed("Timeout", "LXC list query timed out. Try again later."))
+            await _safe_edit(message, embed=error_embed("Timeout", "Container list query timed out. Try again later."))
             return
         
         # Get all tracked containers from database (fast query)
@@ -10557,7 +9645,7 @@ async def show_all_vps(ctx: commands.Context) -> None:
         add_field(embed, "💡 Quick Actions",
                  f"`!lxc-delete <name>` — delete a container\n"
                  f"`!lxc-assign @user <name>` — assign orphaned container to user\n"
-                 f"`!lxc-list` — raw LXC output with full details", False)
+                 f"`!lxc-list` — raw Docker output with full details", False)
         
         await _safe_edit(message, embed=embed)
     
@@ -10572,7 +9660,7 @@ async def show_all_vps(ctx: commands.Context) -> None:
 @command_timeout(120)
 async def lxc_delete(ctx: commands.Context, container_name: str, *, reason: str = "Cleanup") -> None:
     """
-    Delete an LXC container by name (not via user).
+    Delete a Docker container by name (not via user).
     
     This is useful for deleting orphaned or untracked containers directly.
     
@@ -10606,9 +9694,8 @@ async def lxc_delete(ctx: commands.Context, container_name: str, *, reason: str 
     message = await thinking(ctx.channel, "Deleting container", f"Destroying `{container}`…")
     try:
         node_id = vps["node_id"] if is_tracked else 1
-        await run_lxc_command(container, f"delete {shlex.quote(container)} --force", 
-                            timeout=240, node_id=node_id, check=False)
-        
+        await docker_remove(container, node_id, volumes=True, force=True)
+
         # Remove from database if tracked
         if is_tracked:
             await run_blocking(delete_vps_row, container)
@@ -10633,7 +9720,7 @@ async def lxc_delete(ctx: commands.Context, container_name: str, *, reason: str 
 @command_timeout(300)
 async def delete_useless_vps(ctx: commands.Context, node_id: int = None) -> None:
     """
-    Delete LXC containers that exist on a node but are NOT in the bot database.
+    Delete Docker containers that exist on a node but are NOT in the bot database.
     
     This command finds orphaned containers (those created manually or left over from crashes)
     and allows you to delete them. VPS that ARE tracked in the bot database will NOT be touched.
@@ -10656,7 +9743,7 @@ async def delete_useless_vps(ctx: commands.Context, node_id: int = None) -> None
     # Get all containers on the node
     message = await thinking(ctx.channel, "Scanning node", f"Listing containers on {node.get('name', node_id)}…")
     try:
-        all_containers = await get_lxc_containers_on_node(node_id)
+        all_containers = await get_containers_on_node(node_id)
     except Exception as exc:
         await _safe_edit(message, embed=error_embed(
             "Scan Failed", 
@@ -10667,7 +9754,7 @@ async def delete_useless_vps(ctx: commands.Context, node_id: int = None) -> None
     if not all_containers:
         await _safe_edit(message, embed=info_embed(
             "No Containers", 
-            f"Node {node.get('name', node_id)} has no LXC containers."
+            f"Node {node.get('name', node_id)} has no managed containers."
         ))
         return
     
@@ -10732,13 +9819,7 @@ async def delete_useless_vps(ctx: commands.Context, node_id: int = None) -> None
             await panel.step(idx, "running", f"Deleting `{container}`…")
             
             # Force delete the container
-            await run_lxc_command(
-                container, 
-                f"delete {shlex.quote(container)} --force", 
-                timeout=180, 
-                node_id=node_id, 
-                check=False
-            )
+            await docker_remove(container, node_id, volumes=True, force=True)
             
             await panel.step(idx, "done", f"`{container}` deleted")
             deleted_count += 1
@@ -10786,7 +9867,7 @@ async def delete_useless_vps(ctx: commands.Context, node_id: int = None) -> None
 @command_timeout(60)
 async def lxc_assign(ctx: commands.Context, user: discord.User, container_name: str) -> None:
     """
-    Assign an orphaned LXC container to a Discord user.
+    Assign an orphaned Docker container to a Discord user.
     
     Creates a new VPS record in the database for an existing container.
     Useful for manually-created containers or recovering orphaned ones.
@@ -10804,7 +9885,7 @@ async def lxc_assign(ctx: commands.Context, user: discord.User, container_name: 
         return
     
     # Verify container exists on host
-    lxc_containers = await get_lxc_containers_on_node(1)
+    lxc_containers = await get_containers_on_node(1)
     if container not in lxc_containers:
         await ctx.send(embed=error_embed("Container Not Found", 
                                         f"`{container}` does not exist on the host.\n\n"
@@ -10967,6 +10048,284 @@ async def ports_revoke(ctx: commands.Context, forward_id: int) -> None:
         return
     audit("port_revoke", ctx.author.id, detail=f"id={forward_id} host={host_port} owner={owner_id}")
     await ctx.send(embed=success_embed("Revoked", f"Forward `{forward_id}` (host port `{host_port}`) removed."))
+
+
+# ── Docker platform administration ───────────────────────────────────────────
+#
+# These commands expose the infrastructure that replaced LXD: the approved image
+# catalogue, per-node quota support, port reservation history, volume backups and
+# the security policy every customer container is created with.
+
+@bot.command(name="images", aliases=["image-list", "os-list"])
+@is_admin()
+@with_typing
+@command_timeout(COMMAND_TIMEOUT_SECONDS)
+async def images_cmd(ctx: commands.Context) -> None:
+    """List the OS images users may provision."""
+    catalogue = await INFRA.image_options()
+    embed = create_embed("🖼️ Available Images",
+                         f"{len(catalogue)} image(s) approved for provisioning.",
+                         COLORS["magic"])
+    lines = [f"{entry.get('emoji', '🐳')} `{entry['value']}` — {entry.get('label', entry['value'])}"
+             f"{' • built-in' if entry.get('built_in') else ' • custom'}"
+             for entry in catalogue]
+    add_field(embed, "Catalogue", "\n".join(lines) or "_No images approved._", False)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="image-add")
+@is_admin()
+@with_typing
+@command_timeout(unix_config.DOCKER_IMAGE_PULL_TIMEOUT)
+async def image_add(ctx: commands.Context, reference: str, *, label: str = "") -> None:
+    """Approve a custom image for provisioning (and pull it to the local node)."""
+    try:
+        entry = await INFRA.add_image(reference, label=label)
+    except Exception as exc:
+        await ctx.send(embed=error_embed("Image Rejected", f"`{reference}`\n```\n{truncate_text(exc, 400)}\n```"))
+        return
+    audit("docker_image_add", ctx.author.id, target=reference, detail=entry.get("label", ""))
+    await ctx.send(embed=success_embed(
+        "Image Approved",
+        f"{entry.get('emoji', '🐳')} `{entry['value']}` — {entry.get('label', entry['value'])}\n"
+        "Users can now select it when creating a VPS."))
+
+
+@bot.command(name="image-remove")
+@is_admin()
+@with_typing
+@command_timeout(COMMAND_TIMEOUT_SECONDS)
+async def image_remove(ctx: commands.Context, *, reference: str) -> None:
+    """Un-approve an image. Running VPS are never touched."""
+    ok = await INFRA.remove_image(reference)
+    if not ok:
+        await ctx.send(embed=error_embed("Not Found", f"`{reference}` is not an approved image."))
+        return
+    audit("docker_image_remove", ctx.author.id, target=reference)
+    await ctx.send(embed=success_embed("Image Removed",
+                                       f"`{reference}` can no longer be selected.\n"
+                                       "Existing VPS on that image keep running."))
+
+
+@bot.command(name="docker-quota")
+@is_admin()
+@with_typing
+@command_timeout(COMMAND_TIMEOUT_SECONDS)
+async def docker_quota(ctx: commands.Context, node_id: int = None) -> None:
+    """Report what disk-quota enforcement the node actually supports."""
+    node_id = node_id or 1
+    report = await INFRA.node_quota_support(node_id)
+    enforced = bool(report.get("supported"))
+    title = "✅ Quotas enforced" if enforced else "⚠️ Quotas NOT enforced"
+    embed = create_embed(f"💽 {title}", f"Node `{node_id}` • method `{report.get('method')}`",
+                         COLORS["success"] if enforced else COLORS["warning"])
+    add_field(embed, "Filesystem", f"`{report.get('filesystem', 'unknown')}`", True)
+    add_field(embed, "Method", f"`{report.get('method')}`", True)
+    detail = report.get("detail") or report.get("reason") or ""
+    if detail:
+        add_field(embed, "Detail", str(detail)[:1000], False)
+    if not enforced:
+        add_field(embed, "What this means",
+                  "Storage limits are shown to users and recorded, but the host cannot "
+                  "enforce them. A VPS can write past its advertised disk size until the "
+                  "node's filesystem fills up.", False)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="port-history", aliases=["ports-history"])
+@is_admin()
+@with_typing
+@command_timeout(COMMAND_TIMEOUT_SECONDS)
+async def port_history_cmd(ctx: commands.Context, container_name: str, limit: int = 20) -> None:
+    """Show the reservation history for a container, including released ports."""
+    limit = clamp_int(limit, 1, 50, 20)
+    rows = await INFRA.port_history(container_name, limit=limit)
+    embed = create_embed(f"🔌 Port History · {container_name}",
+                         f"Last {len(rows)} reservation(s) — active **and** released.",
+                         COLORS["network"])
+    if not rows:
+        add_field(embed, "History", "_No port reservations recorded._", False)
+    else:
+        lines = []
+        for row in rows:
+            state = "🟢" if row.get("status") == "bound" else (
+                "🟡" if row.get("status") == "reserved" else "⚫")
+            lines.append(
+                f"{state} `{row.get('host_ip')}:{row.get('host_port')}` → `:{row.get('container_port')}` "
+                f"{str(row.get('protocol', 'tcp')).upper()} • {row.get('purpose', 'user')} "
+                f"• {row.get('status')}")
+        add_field(embed, "Reservations", "\n".join(lines[:20]), False)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="docker-orphans")
+@is_admin()
+@with_typing
+@command_timeout(COMMAND_TIMEOUT_SECONDS)
+async def docker_orphans(ctx: commands.Context, node_id: int = None) -> None:
+    """Find containers that exist on the engine but have no database row."""
+    found = await INFRA.orphans(node_id)
+    total = sum(len(items) for items in found.values())
+    embed = create_embed("👻 Orphaned Containers",
+                         f"{total} container(s) with no matching database row.",
+                         COLORS["warning"] if total else COLORS["success"])
+    for nid, items in sorted(found.items()):
+        if not items:
+            continue
+        lines = [f"`{item.get('name')}` • {item.get('status')} • {item.get('image', '?')}"
+                 for item in items[:15]]
+        add_field(embed, f"Node {nid}", "\n".join(lines), False)
+    if not total:
+        add_field(embed, "Clean", "Every managed container has a database row.", False)
+    else:
+        add_field(embed, "Cleanup",
+                  f"Remove one with `{PREFIX}docker-orphan-remove <node_id> <name>`.\n"
+                  "Nothing is deleted automatically.", False)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="docker-orphan-remove")
+@is_main_admin()
+@with_typing
+@command_timeout(COMMAND_TIMEOUT_SECONDS)
+async def docker_orphan_remove(ctx: commands.Context, node_id: int, *, container_name: str) -> None:
+    """Delete an orphaned container from the engine. Never touches the database."""
+    ok = await INFRA.remove_orphan(node_id, container_name)
+    if not ok:
+        await ctx.send(embed=error_embed("Not Removed",
+                                         f"`{container_name}` is not an orphan on node `{node_id}`, "
+                                         "or removal failed. Check the logs."))
+        return
+    audit("docker_orphan_remove", ctx.author.id, target=container_name, detail=f"node={node_id}")
+    await ctx.send(embed=success_embed("Orphan Removed", f"`{container_name}` deleted from node `{node_id}`."))
+
+
+@bot.command(name="docker-policy")
+@is_admin()
+@with_typing
+@command_timeout(COMMAND_TIMEOUT_SECONDS)
+async def docker_policy(ctx: commands.Context) -> None:
+    """Show the security policy applied to every customer container."""
+    policy = await INFRA.security_policy()
+    embed = create_embed("🛡️ Container Security Policy",
+                         "Applied to every customer VPS at creation time.", COLORS["magic"])
+    add_field(embed, "Privileged mode", "❌ never" if not policy.get("privileged") else "⚠️ ENABLED", True)
+    add_field(embed, "Docker socket",
+              "❌ not exposed" if not policy.get("docker_socket_exposed") else "⚠️ EXPOSED", True)
+    add_field(embed, "Host namespaces",
+              "❌ isolated" if not policy.get("host_namespaces_shared") else "⚠️ SHARED", True)
+    dropped = policy.get("capabilities_dropped") or []
+    add_field(embed, f"Capabilities dropped ({len(dropped)})",
+              " ".join(f"`{cap}`" for cap in dropped) or "_none_", False)
+    add_field(embed, "PID limit", f"`{policy.get('pids_limit')}`", True)
+    add_field(embed, "Memory swap", "disabled (limit == memswap)", True)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="vps-backup")
+@is_admin()
+@with_typing
+@command_timeout(BACKUP_TIMEOUT)
+async def vps_backup(ctx: commands.Context, container_name: str, *, note: str = "") -> None:
+    """Archive a VPS's persistent volume plus its configuration."""
+    vps = await run_blocking(get_vps_by_container, container_name)
+    if not vps:
+        await ctx.send(embed=error_embed("Not Found", f"No VPS named `{container_name}`."))
+        return
+    panel = ProgressPanel(ctx.channel, f"Backing up {container_name}",
+                          ["Archive the persistent volume"], color=COLORS["magic"])
+    await panel.start()
+    pump = PanelPump(panel, 1)
+    pump.start()
+    try:
+        outcome = await INFRA.backup(container_name, note=note, progress=pump.emit_line)
+    except Exception as exc:
+        await pump.stop(complete=False)
+        await ctx.send(embed=error_embed("Backup Failed", f"```\n{truncate_text(exc, 400)}\n```"))
+        return
+    await pump.stop()
+    audit("vps_backup", ctx.author.id, target=container_name, detail=outcome.get("name", ""))
+    embed = success_embed("Backup Complete", f"`{outcome.get('name')}`")
+    add_field(embed, "Size", f"`{outcome.get('size_mb', 0)} MB`", True)
+    add_field(embed, "Checksum", f"`{str(outcome.get('sha256', ''))[:16]}…`", True)
+    add_field(embed, "Verify", f"Use `{PREFIX}vps-backup-verify {outcome.get('name')}`", False)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="vps-backups")
+@is_admin()
+@with_typing
+@command_timeout(COMMAND_TIMEOUT_SECONDS)
+async def vps_backups(ctx: commands.Context, container_name: str = None) -> None:
+    """List stored volume backups."""
+    rows = await INFRA.list_backups(container_name)
+    embed = create_embed("📦 Backups",
+                         f"{len(rows)} backup(s){' for `' + container_name + '`' if container_name else ''}.",
+                         COLORS["magic"])
+    if not rows:
+        add_field(embed, "Stored", "_None yet._", False)
+    else:
+        lines = [f"`{row.get('name')}` • {row.get('container_name')} • {row.get('size_mb', 0)} MB "
+                 f"• {str(row.get('created_at', ''))[:16]}" for row in rows[:15]]
+        add_field(embed, "Stored", "\n".join(lines), False)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="vps-backup-verify")
+@is_admin()
+@with_typing
+@command_timeout(BACKUP_TIMEOUT)
+async def vps_backup_verify(ctx: commands.Context, *, backup_name: str) -> None:
+    """Re-check a backup's checksum and archive integrity."""
+    report = await INFRA.verify_backup(backup_name)
+    ok = bool(report.get("ok"))
+    embed = create_embed("✅ Backup Valid" if ok else "❌ Backup Corrupt",
+                         f"`{backup_name}`", COLORS["success"] if ok else COLORS["error"])
+    for key in ("size_mb", "sha256_ok", "archive_ok", "error"):
+        if report.get(key) is not None:
+            add_field(embed, key.replace("_", " ").title(), f"`{report.get(key)}`", True)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="vps-restore")
+@is_main_admin()
+@with_typing
+@command_timeout(BACKUP_TIMEOUT)
+async def vps_restore(ctx: commands.Context, container_name: str, *, backup_name: str) -> None:
+    """Restore a volume backup over the VPS. The container is recreated."""
+    panel = ProgressPanel(ctx.channel, f"Restoring {container_name}",
+                          ["Restore the persistent volume"], color=COLORS["magic"])
+    await panel.start()
+    pump = PanelPump(panel, 1)
+    pump.start()
+    try:
+        outcome = await INFRA.restore(container_name, backup_name, progress=pump.emit_line)
+    except Exception as exc:
+        await pump.stop(complete=False)
+        await ctx.send(embed=error_embed("Restore Failed", f"```\n{truncate_text(exc, 400)}\n```"))
+        return
+    await pump.stop()
+    audit("vps_restore", ctx.author.id, target=container_name, detail=backup_name)
+    await ctx.send(embed=success_embed(
+        "Restore Complete",
+        f"`{container_name}` restored from `{backup_name}`.\n"
+        f"SSH port `{outcome.get('ssh_host_port')}` • volume `{outcome.get('volume_name')}`"))
+
+
+@bot.command(name="vps-backup-prune")
+@is_admin()
+@with_typing
+@command_timeout(COMMAND_TIMEOUT_SECONDS)
+async def vps_backup_prune(ctx: commands.Context, node_id: int = None) -> None:
+    """Apply the retention policy (keep the newest 4, or 30 days)."""
+    outcome = await INFRA.backup_retention(node_id)
+    removed = outcome.get("removed") or []
+    embed = success_embed("Retention Applied",
+                          f"{len(removed)} backup(s) deleted, {outcome.get('kept', 0)} kept.")
+    if removed:
+        add_field(embed, "Removed", "\n".join(f"`{name}`" for name in removed[:15]), False)
+    audit("backup_retention", ctx.author.id, detail=f"removed={len(removed)}")
+    await ctx.send(embed=embed)
 
 
 @bot.command(name="admin-add")
@@ -11609,8 +10968,17 @@ class NodeManageView(LivePanelView):
                                         f"RAM `{float(stats.get('ram') or 0):.0f}%`\n"
                                         f"Disk `{stats.get('disk')}`", True)
             try:
-                pools = await run_lxc_command("", "storage list", timeout=30, node_id=node["id"])
-                add_field(embed, "💾 Storage", safe_code_block(truncate_text(pools, 500), max_chars=600), False)
+                detail = await INFRA.node_status(int(node["id"]))
+                managed = detail.get("managed") or {}
+                quota = await INFRA.node_quota_support(int(node["id"]))
+                summary = (
+                    f"Docker `{detail.get('docker_version') or '?'}` • "
+                    f"driver `{detail.get('storage_driver') or '?'}`\n"
+                    f"containers: {managed.get('running', 0)} running / "
+                    f"{managed.get('stopped', 0)} stopped\n"
+                    f"disk: {detail.get('disk', {}).get('text', '?') if isinstance(detail.get('disk'), dict) else '?'}\n"
+                    f"quota: **{'enforced — ' + str(quota.get('method')) if quota.get('supported') else 'not enforceable'}**")
+                add_field(embed, "💾 Storage", summary, False)
             except Exception as exc:
                 add_field(embed, "💾 Storage", f"Unavailable: {truncate_text(exc, 150)}", False)
         else:
@@ -12185,8 +11553,17 @@ def startup_checks() -> List[str]:
         problems.append("DISCORD_TOKEN looks too short — bots tokens are ~70 characters long.")
     if not MAIN_ADMIN_ID:
         problems.append("MAIN_ADMIN_ID is not set (no admin commands will be usable).")
-    if not shutil.which("lxc") and not shutil.which("lxd") and not shutil.which("podman"):
-        problems.append("Neither lxc, lxd nor podman was found on PATH — container commands will fail.")
+    # v11: the backend is the Docker Engine API, not a CLI on PATH.  Probe the
+    # socket directly so a missing-but-running daemon is not a false alarm.
+    try:
+        import docker as _docker_probe
+
+        _client = _docker_probe.DockerClient(base_url=unix_config.DOCKER_HOST_URL,
+                                            timeout=min(5, unix_config.DOCKER_API_TIMEOUT))
+        _client.ping()
+        _client.close()
+    except Exception as exc:
+        problems.append(f"Cannot reach the Docker Engine at {unix_config.DOCKER_HOST_URL}: {exc}")
     if not DB_FILE.exists():
         problems.append("Database file could not be created.")
     if WEBSSH_ENABLED and not YOUR_SERVER_IP:
@@ -12207,7 +11584,7 @@ def print_banner() -> None:
 │  Main admin    : {MAIN_ADMIN_ID or 'NOT SET'}
 │  Server IP     : {YOUR_SERVER_IP}
 │  Password hash : {'Argon2id' if ARGON2_AVAILABLE else 'PBKDF2-SHA256 (pip install argon2-cffi)'}
-│  Storage pool  : {DEFAULT_STORAGE_POOL}
+│  Docker volume : {unix_config.DOCKER_VOLUME_PREFIX}<container>  (persistent)
 │  Web terminal  : {'enabled on port ' + str(WEBSSH_PORT) if WEBSSH_ENABLED else 'disabled'}
 │  Animations    : {'on' if anim_on() else 'off'} • speed {ANIM_STATE.get('speed')}x
 │  Live panels   : refresh {LIVE_REFRESH_SECONDS}s • max {LIVE_MAX_MINUTES} min

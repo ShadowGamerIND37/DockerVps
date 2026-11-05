@@ -1,0 +1,23 @@
+# ── runtime state (never commit) ────────────────────────────────────────────
+*.db
+*.db-wal
+*.db-shm
+.secret_key
+.env
+logs/
+db_backups/
+backups/
+migration_reports/
+
+# ── python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── build artefacts ─────────────────────────────────────────────────────────
+dist/
+*.zip

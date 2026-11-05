@@ -1,0 +1,35 @@
+[Unit]
+Description=UnixNodes v11 — Docker VPS control bot
+Documentation=https://github.com/ShadowGamerIND37/DockerVps
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=-__APP_DIR__/.env
+ExecStart=__PYTHON__ __APP_DIR__/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=unixnodes
+
+# ── hardening ────────────────────────────────────────────────────────────────
+# The bot must reach the Docker socket, which is root-equivalent, so it cannot
+# be locked down like a normal service.  Everything else is tightened.
+NoNewPrivileges=no
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ProtectKernelTunables=no
+ProtectControlGroups=no
+LimitNOFILE=65536
+TimeoutStopSec=60
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
