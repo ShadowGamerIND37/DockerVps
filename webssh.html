@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>__BOT_NAME__ · Live SSH</title>
+
+    <!-- Local xterm.js (served by Flask from /static/) — with CDN fallback -->
+    <link rel="stylesheet" href="/static/xterm.min.css"
+          onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css';">
+
+    <script>
+      // ── Injected by bot.py (must run before anything else) ──────────────
+      window.__WEBSSH_CONFIG__ = {
+        botName:     "__BOT_NAME__",
+        botVersion:  "__BOT_VERSION__",
+        token:       "__TOKEN__",
+        unlockKey:   "__UNLOCK_KEY__",
+        autoconnect: __AUTOCONNECT__   // null or {host, port, username, password, label}
+      };
+    </script>
+
+    <script>
+      // Robust loader: try local → jsdelivr → unpkg → cdnjs
+      (function () {
+        function tryLoad(urls, checkFn, onDone) {
+          if (checkFn()) { onDone(true); return; }
+          var i = 0;
+          (function next() {
+            if (i >= urls.length) { onDone(false); return; }
+            var url = urls[i++];
+            var s = document.createElement('script');
+            s.src = url;
+            s.onload = function () { onDone(checkFn()); };
+            s.onerror = function () { next(); };
+            document.head.appendChild(s);
+          })();
+        }
+
+        window.__xtermLoadState = { core: false, fit: false, links: false };
+        var pending = 3;
+
+        function done() {
+          pending--;
+          if (pending === 0) {
+            window.__xtermReady = window.__xtermLoadState.core && window.__xtermLoadState.fit;
+            if (window.__xtermReady && typeof window.__onXtermReady === 'function') {
+              window.__onXtermReady();
+            } else if (!window.__xtermReady && typeof window.__onXtermFail === 'function') {
+              window.__onXtermFail();
+            }
+          }
+        }
+
+        tryLoad([
+          '/static/xterm.min.js',
+          'https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js',
+          'https://unpkg.com/xterm@5.3.0/lib/xterm.min.js',
+          'https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.js'
+        ], function(){ return typeof Terminal !== 'undefined'; }, function(ok){
+          window.__xtermLoadState.core = ok; done();
+        });
+
+        tryLoad([
+          '/static/xterm-addon-fit.min.js',
+          'https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js',
+          'https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js'
+        ], function(){ return typeof FitAddon !== 'undefined' && FitAddon.FitAddon; }, function(ok){
+          window.__xtermLoadState.fit = ok; done();
+        });
+
+        tryLoad([
+          '/static/xterm-addon-web-links.min.js',
+          'https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js',
+          'https://unpkg.com/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js'
+        ], function(){ return typeof WebLinksAddon !== 'undefined' && WebLinksAddon.WebLinksAddon; }, function(ok){
+          window.__xtermLoadState.links = ok; done();
+        });
+      })();
+    </script>
+
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg-root: #0a0a0c;
+            --bg-surface: #121216;
+            --bg-elevated: #1a1a20;
+            --bg-hover: #22222a;
+            --border-subtle: #26262e;
+            --border-medium: #33333e;
+            --text-primary: #e8e8ed;
+            --text-secondary: #a0a0b0;
+            --text-muted: #6b6b7a;
+            --accent: #7c6aff;
+            --accent-dim: #5c4ad0;
+            --accent-glow: rgba(124, 106, 255, 0.25);
+            --success: #2ecc71;
+            --success-glow: rgba(46, 204, 113, 0.3);
+            --warning: #f0b34b;
+            --danger: #e74c5a;
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 16px;
+            --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.6);
+            --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-smooth: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        html, body {
+            height: 100%;
+            background: var(--bg-root);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            overflow: hidden;
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+
+        /* ── Title bar ── */
+        .titlebar {
+            display: flex; align-items: center; justify-content: space-between;
+            height: 42px; padding: 0 16px 0 12px;
+            background: var(--bg-surface); flex-shrink: 0; user-select: none;
+            border-bottom: 1px solid var(--border-subtle);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        }
+        .titlebar-left { display: flex; align-items: center; gap: 8px; }
+        .titlebar-left .tab {
+            display: flex; align-items: center; gap: 10px;
+            padding: 7px 18px; background: var(--bg-elevated);
+            border-radius: var(--radius-md); font-weight: 500;
+            font-size: 12.5px; color: var(--text-primary);
+            letter-spacing: 0.1px; border: 1px solid var(--border-subtle);
+            transition: border-color var(--transition-fast);
+        }
+        .titlebar-left .tab:hover { border-color: var(--border-medium); }
+        .titlebar-left .tab i { color: var(--accent); font-size: 13px; }
+
+        .titlebar-right { display: flex; align-items: center; gap: 10px; }
+
+        .status-indicator {
+            display: flex; align-items: center; gap: 7px;
+            font-size: 11.5px; font-weight: 500;
+            color: var(--text-muted); padding: 5px 12px 5px 10px;
+            background: var(--bg-root); border-radius: 20px;
+            border: 1px solid var(--border-subtle);
+            transition: all var(--transition-smooth);
+        }
+        .status-indicator .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #3a3a44; transition: all var(--transition-smooth); flex-shrink: 0;
+        }
+        .status-indicator.connected {
+            border-color: rgba(46, 204, 113, 0.3);
+            color: #9bffc5;
+            background: rgba(46, 204, 113, 0.06);
+        }
+        .status-indicator.connected .dot {
+            background: var(--success);
+            box-shadow: 0 0 12px var(--success-glow), 0 0 4px var(--success);
+        }
+        .status-indicator.warning {
+            border-color: rgba(240, 179, 75, 0.3);
+            color: #ffd98a;
+            background: rgba(240, 179, 75, 0.06);
+        }
+        .status-indicator.warning .dot {
+            background: var(--warning);
+            box-shadow: 0 0 12px rgba(240, 179, 75, 0.4);
+        }
+
+        .win-buttons { display: flex; gap: 4px; margin-left: 6px; }
+        .win-btn {
+            width: 38px; height: 30px;
+            display: flex; align-items: center; justify-content: center;
+            background: transparent; border: none; color: var(--text-secondary);
+            cursor: pointer; font-size: 11px; border-radius: var(--radius-sm);
+            transition: all var(--transition-fast);
+        }
+        .win-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .win-btn.close:hover { background: var(--danger); color: white; }
+
+        .tb-btn {
+            display: flex; align-items: center; gap: 7px;
+            padding: 6px 16px; font-size: 12px; font-weight: 500;
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary); cursor: pointer;
+            transition: all var(--transition-fast);
+            letter-spacing: 0.1px; white-space: nowrap;
+        }
+        .tb-btn:hover:not(:disabled) {
+            background: var(--bg-hover);
+            border-color: var(--border-medium);
+            color: var(--text-primary);
+        }
+        .tb-btn:active:not(:disabled) { transform: scale(0.97); }
+        .tb-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        .tb-btn.primary {
+            background: var(--accent); border-color: var(--accent);
+            color: #fff; box-shadow: 0 0 20px var(--accent-glow);
+        }
+        .tb-btn.primary:hover:not(:disabled) {
+            background: #8b7aff; border-color: #8b7aff;
+            box-shadow: 0 0 28px var(--accent-glow);
+        }
+        .tb-btn i { font-size: 11px; }
+
+        /* ── Terminal host ── */
+        .terminal-host {
+            flex: 1; padding: 8px 10px;
+            background: var(--bg-root); overflow: hidden; position: relative;
+        }
+        #terminal {
+            width: 100%; height: 100%;
+            border-radius: var(--radius-md); overflow: hidden;
+            border: 1px solid var(--border-subtle);
+            box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.4);
+        }
+        .xterm-screen { padding: 4px 2px; }
+
+        /* Fallback UI when xterm cannot load */
+        .terminal-fallback {
+            position: absolute; inset: 8px 10px;
+            display: none; flex-direction: column;
+            align-items: center; justify-content: center;
+            gap: 14px; text-align: center; padding: 30px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .terminal-fallback.show { display: flex; }
+        .terminal-fallback .tf-icon { font-size: 42px; color: var(--warning); }
+        .terminal-fallback .tf-title { font-size: 16px; font-weight: 600; color: #ffb84b; }
+        .terminal-fallback .tf-desc { font-size: 12.5px; color: var(--text-secondary); max-width: 520px; line-height: 1.7; }
+        .terminal-fallback code { background: var(--bg-root); padding: 2px 8px; border-radius: 4px; color: var(--accent); font-size: 11.5px; }
+
+        /* ── Status bar ── */
+        .statusbar {
+            display: flex; align-items: center; justify-content: space-between;
+            height: 32px; padding: 0 18px;
+            background: var(--bg-surface); color: var(--text-muted);
+            font-size: 11.5px; flex-shrink: 0;
+            border-top: 1px solid var(--border-subtle);
+            user-select: none;
+        }
+        .statusbar-left { display: flex; align-items: center; gap: 22px; }
+        .sb-item { display: flex; align-items: center; gap: 7px; font-size: 11.5px; transition: color var(--transition-fast); }
+        .sb-item i { font-size: 10px; color: var(--text-muted); transition: color var(--transition-fast); }
+        .sb-item.active i { color: var(--success); }
+        .sb-item.active { color: #9bffc5; }
+        .sb-item.active .fa-clock { color: var(--accent); }
+        .sb-item .fa-circle { font-size: 7px; }
+        .sb-item.active .fa-circle { color: var(--success); }
+
+        /* ── Modal ── */
+        .modal-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 2000; visibility: hidden; opacity: 0;
+            transition: opacity var(--transition-smooth), visibility var(--transition-smooth);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        }
+        .modal-overlay.active { visibility: visible; opacity: 1; }
+
+        .modal {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-medium);
+            border-radius: var(--radius-lg);
+            width: 92%; max-width: 440px;
+            padding: 28px 28px 24px;
+            box-shadow: var(--shadow-soft), 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+            transform: scale(0.94) translateY(8px);
+            transition: transform var(--transition-smooth);
+        }
+        .modal-overlay.active .modal { transform: scale(1) translateY(0); }
+
+        .modal h3 {
+            font-size: 17px; font-weight: 600; color: var(--text-primary);
+            margin-bottom: 24px; display: flex; align-items: center; gap: 10px;
+            letter-spacing: -0.2px;
+        }
+        .modal h3 i { color: var(--accent); font-size: 16px; }
+        .modal h3.pin-title i { color: var(--warning); }
+
+        .form-group { margin-bottom: 16px; }
+        .form-group label {
+            display: block; font-size: 11px; font-weight: 600;
+            color: var(--text-muted); margin-bottom: 6px;
+            text-transform: uppercase; letter-spacing: 0.6px;
+        }
+        .form-group input {
+            width: 100%; padding: 11px 14px;
+            background: var(--bg-root); border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm); color: var(--text-primary);
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            font-size: 13px; outline: none;
+            transition: border var(--transition-fast), box-shadow var(--transition-fast);
+        }
+        .form-group input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+        .form-group input::placeholder { color: #4a4a58; }
+
+        .modal-actions { display: flex; gap: 10px; margin-top: 24px; }
+        .modal-actions .tb-btn { flex: 1; justify-content: center; padding: 11px; font-size: 12.5px; }
+
+        .modal-note {
+            margin-top: 14px; padding: 10px 12px;
+            background: rgba(240, 179, 75, 0.06);
+            border: 1px solid rgba(240, 179, 75, 0.2);
+            border-radius: var(--radius-sm);
+            font-size: 11.5px; color: #ffd98a; line-height: 1.55;
+        }
+        .modal-note.error {
+            background: rgba(231, 76, 90, 0.06);
+            border-color: rgba(231, 76, 90, 0.25);
+            color: #ff9ba6;
+        }
+        .modal-note.success {
+            background: rgba(46, 204, 113, 0.06);
+            border-color: rgba(46, 204, 113, 0.25);
+            color: #9bffc5;
+        }
+
+        /* PIN input — big, centered, spaced */
+        .pin-input {
+            width: 100%; padding: 16px 20px;
+            background: var(--bg-root); border: 1px solid var(--border-medium);
+            border-radius: var(--radius-md); color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 26px; letter-spacing: 12px;
+            text-align: center; outline: none;
+            transition: border var(--transition-fast), box-shadow var(--transition-fast);
+        }
+        .pin-input:focus {
+            border-color: var(--warning);
+            box-shadow: 0 0 0 3px rgba(240, 179, 75, 0.15);
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed; bottom: 46px; left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-medium);
+            border-radius: var(--radius-md);
+            padding: 12px 20px; font-size: 12.5px;
+            color: var(--text-primary); box-shadow: var(--shadow-soft);
+            opacity: 0; pointer-events: none;
+            transition: all var(--transition-smooth);
+            z-index: 3000;
+            display: flex; align-items: center; gap: 10px;
+            max-width: 90vw;
+        }
+        .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+        .toast i { font-size: 13px; }
+        .toast.success i { color: var(--success); }
+        .toast.error i { color: var(--danger); }
+        .toast.warn i { color: var(--warning); }
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #44445a; }
+
+        .fa-spin { animation: fa-spin 1s linear infinite; }
+        @keyframes fa-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        @media (max-width: 720px) {
+            .titlebar { padding: 0 10px; height: 40px; }
+            .titlebar-left .tab { padding: 6px 12px; font-size: 11.5px; }
+            .tb-btn { padding: 5px 10px; font-size: 11px; }
+            .tb-btn span { display: none; }
+            .tb-btn i { font-size: 12px; }
+            .statusbar { padding: 0 12px; font-size: 10.5px; }
+            .statusbar-left { gap: 14px; }
+            .modal { padding: 22px; }
+        }
+        @media (max-width: 480px) {
+            .titlebar-right .status-indicator { display: none; }
+            .statusbar-left .sb-item:last-child { display: none; }
+        }
+
+        @keyframes fadeSlideUp {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .terminal-host, .statusbar { animation: fadeSlideUp 0.4s ease-out; }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <div class="titlebar">
+            <div class="titlebar-left">
+                <div class="tab">
+                    <i class="fas fa-terminal"></i>
+                    <span id="tabTitle">__BOT_NAME__ — SSH</span>
+                </div>
+            </div>
+            <div class="titlebar-right">
+                <div class="status-indicator" id="statusIndicator">
+                    <span class="dot"></span>
+                    <span id="statusText">Disconnected</span>
+                </div>
+                <button class="tb-btn" id="clearBtn" title="Clear terminal">
+                    <i class="fas fa-eraser"></i> <span>Clear</span>
+                </button>
+                <button class="tb-btn" id="disconnectBtn" disabled title="Disconnect session">
+                    <i class="fas fa-plug"></i> <span>Disconnect</span>
+                </button>
+                <button class="tb-btn primary" id="connectBtn" title="New SSH connection">
+                    <i class="fas fa-plus"></i> <span>Connect</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="terminal-host">
+            <div id="terminal"></div>
+            <div class="terminal-fallback" id="terminalFallback">
+                <div class="tf-icon"><i class="fas fa-triangle-exclamation"></i></div>
+                <div class="tf-title">Terminal Library Failed to Load</div>
+                <div class="tf-desc">
+                    xterm.js could not be loaded from <code>/static/</code> or any CDN.<br>
+                    Check your internet connection, firewall, or browser extensions (AdBlock), then retry.
+                </div>
+                <button class="tb-btn primary" onclick="location.reload()">
+                    <i class="fas fa-rotate-right"></i> Retry
+                </button>
+            </div>
+        </div>
+
+        <div class="statusbar">
+            <div class="statusbar-left">
+                <div class="sb-item" id="sbSession">
+                    <i class="fas fa-circle"></i>
+                    <span id="sbSessionText">No session</span>
+                </div>
+                <div class="sb-item" id="sbLatency">
+                    <i class="fas fa-clock"></i>
+                    <span id="sbLatencyText">—</span>
+                </div>
+            </div>
+            <div class="sb-item">
+                <i class="fas fa-code"></i>
+                <span>__BOT_NAME__ v__BOT_VERSION__ · xterm.js</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Connect modal -->
+    <div class="modal-overlay" id="connectModal">
+        <div class="modal">
+            <h3><i class="fas fa-lock"></i> SSH Connection</h3>
+            <form id="sshForm">
+                <div class="form-group">
+                    <label>Host / IP</label>
+                    <input type="text" id="inHost" placeholder="192.168.1.1" required value="127.0.0.1" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="form-group">
+                    <label>Port</label>
+                    <input type="number" id="inPort" value="22" min="1" max="65535" required>
+                </div>
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="inUser" placeholder="root" value="root" required autocomplete="off" spellcheck="false">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="inPass" placeholder="••••••••" required autocomplete="off">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="tb-btn" id="modalCancel">Cancel</button>
+                    <button type="submit" class="tb-btn primary" id="modalConnect">
+                        <i class="fas fa-link"></i> Connect
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- PIN modal (shown when backend returns code=pin_required) -->
+    <div class="modal-overlay" id="pinModal">
+        <div class="modal">
+            <h3 class="pin-title"><i class="fas fa-shield-halved"></i> Terminal PIN Required</h3>
+            <p style="font-size:12.5px;color:var(--text-secondary);margin-bottom:18px;line-height:1.6;">
+                This terminal link is protected. Enter the <strong>4–8 digit PIN</strong> from your bot DM to continue.
+            </p>
+            <form id="pinForm">
+                <div class="form-group">
+                    <input type="text" id="inPin" class="pin-input" placeholder="••••"
+                           inputmode="numeric" pattern="[0-9]*" maxlength="8"
+                           autocomplete="off" required>
+                </div>
+                <div class="modal-note" id="pinNote" style="display:none;"></div>
+                <div class="modal-actions">
+                    <button type="button" class="tb-btn" id="pinCancel">Cancel</button>
+                    <button type="submit" class="tb-btn primary" id="pinSubmit">
+                        <i class="fas fa-unlock"></i> Unlock
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast">
+        <i class="fas fa-info-circle"></i>
+        <span id="toastText"></span>
+    </div>
+
+    <script>
+    // ============================================================
+    // Boot — reads config, wires UI, then hands off to xterm boot
+    // ============================================================
+    (function () {
+        'use strict';
+
+        var CFG = window.__WEBSSH_CONFIG__ || {};
+        var TOKEN = (CFG.token && CFG.token !== 'none') ? CFG.token : '';
+        var UNLOCK_KEY = CFG.unlockKey || '';
+        var AUTOCONNECT = CFG.autoconnect || null;
+
+        // Expose for the xterm boot function below
+        window.__TERMINUS__ = {
+            token: TOKEN,
+            unlockKey: UNLOCK_KEY,
+            autoconnect: AUTOCONNECT
+        };
+
+        var $ = function (id) { return document.getElementById(id); };
+
+        // ── Toast helper (shared) ──────────────────────────────────
+        var toastTimer = null;
+        window.showToast = function (msg, kind) {
+            var el = $('toast');
+            var icon = el.querySelector('i');
+            var text = $('toastText');
+            if (!el) return;
+            text.textContent = msg;
+            el.className = 'toast ' + (kind || 'info');
+            icon.className = kind === 'success' ? 'fas fa-check-circle'
+                          : kind === 'error'   ? 'fas fa-exclamation-circle'
+                          : kind === 'warn'    ? 'fas fa-triangle-exclamation'
+                          : 'fas fa-info-circle';
+            el.classList.add('show');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(function () { el.classList.remove('show'); }, 3800);
+        };
+
+        // ── Modal wiring (works even if xterm never loads) ─────────
+        var connectModal = $('connectModal');
+        var pinModal = $('pinModal');
+        var connectBtn = $('connectBtn');
+        var modalCancel = $('modalCancel');
+        var pinCancel = $('pinCancel');
+
+        function openModal(el) { if (el) el.classList.add('active'); }
+        function closeModal(el) { if (el) el.classList.remove('active'); }
+
+        if (connectBtn) connectBtn.addEventListener('click', function () {
+            openModal(connectModal);
+            setTimeout(function () { try { $('inHost').focus(); } catch (e) {} }, 100);
+        });
+        if (modalCancel) modalCancel.addEventListener('click', function () {
+            closeModal(connectModal);
+        });
+        if (pinCancel) pinCancel.addEventListener('click', function () {
+            closeModal(pinModal);
+        });
+        [connectModal, pinModal].forEach(function (m) {
+            if (!m) return;
+            m.addEventListener('click', function (e) {
+                if (e.target === m) m.classList.remove('active');
+            });
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') {
+                if (connectModal && connectModal.classList.contains('active')) closeModal(connectModal);
+                if (pinModal && pinModal.classList.contains('active')) closeModal(pinModal);
+            }
+        });
+    })();
+
+    // ============================================================
+    // Main app — runs only after xterm.js finishes loading
+    // ============================================================
+    (function () {
+        'use strict';
+
+        function bootApp() {
+            var $ = function (id) { return document.getElementById(id); };
+            var CFG = window.__TERMINUS__ || {};
+            var TOKEN = CFG.token || '';
+            var UNLOCK_KEY = CFG.unlockKey || '';
+            var AUTOCONNECT = CFG.autoconnect || null;
+
+            // ── xterm init ──
+            var term, fitAddon;
+            try {
+                term = new Terminal({
+                    cursorBlink: true,
+                    cursorStyle: 'block',
+                    fontFamily: "'JetBrains Mono', 'Consolas', 'Fira Code', monospace",
+                    fontSize: 14,
+                    lineHeight: 1.25,
+                    letterSpacing: 0,
+                    scrollback: 8000,
+                    convertEol: true,
+                    allowProposedApi: true,
+                    smoothScrollDuration: 80,
+                    theme: {
+                        background: '#0a0a0c', foreground: '#d8d8e0',
+                        cursor: '#b8aaff', cursorAccent: '#0a0a0c',
+                        selectionBackground: '#3a2d6e', selectionForeground: '#ffffff',
+                        black: '#1a1a20', red: '#f07178', green: '#7ec699',
+                        yellow: '#f0c674', blue: '#82aaff', magenta: '#c792ea',
+                        cyan: '#7fdbca', white: '#d8d8e0',
+                        brightBlack: '#5c5c6e', brightRed: '#ff8b92', brightGreen: '#9dffb0',
+                        brightYellow: '#ffe08a', brightBlue: '#a4c2ff', brightMagenta: '#e0aaff',
+                        brightCyan: '#a0f0e0', brightWhite: '#ffffff'
+                    }
+                });
+
+                fitAddon = new FitAddon.FitAddon();
+                term.loadAddon(fitAddon);
+                if (typeof WebLinksAddon !== 'undefined' && WebLinksAddon.WebLinksAddon) {
+                    term.loadAddon(new WebLinksAddon.WebLinksAddon());
+                }
+                term.open(document.getElementById('terminal'));
+                setTimeout(function () { try { fitAddon.fit(); } catch (e) {} }, 60);
+            } catch (e) {
+                console.error('[Terminus] Terminal init error:', e);
+                showFallback();
+                return;
+            }
+
+            window.addEventListener('resize', function () {
+                try { fitAddon.fit(); } catch (_) {}
+            });
+
+            // ── DOM refs ──
+            var statusIndicator = $('statusIndicator');
+            var statusText      = $('statusText');
+            var tabTitle        = $('tabTitle');
+            var clearBtn        = $('clearBtn');
+            var disconnectBtn   = $('disconnectBtn');
+            var connectModal    = $('connectModal');
+            var sshForm         = $('sshForm');
+            var inHost          = $('inHost');
+            var inPort          = $('inPort');
+            var inUser          = $('inUser');
+            var inPass          = $('inPass');
+            var modalConnect    = $('modalConnect');
+            var pinModal        = $('pinModal');
+            var pinForm         = $('pinForm');
+            var inPin           = $('inPin');
+            var pinNote         = $('pinNote');
+            var pinSubmit       = $('pinSubmit');
+            var sbSession       = $('sbSession');
+            var sbSessionText   = $('sbSessionText');
+            var sbLatency       = $('sbLatency');
+            var sbLatencyText   = $('sbLatencyText');
+
+            // ── state ──
+            var sessionId    = null;
+            var isConnected  = false;
+            var pollTimer    = null;
+            var lastIdx      = 0;
+            var busyRead     = false;
+            var currentHost  = '';
+            var currentUser  = '';
+            var currentPort  = 22;
+            var currentPass  = '';
+
+            // ── welcome banner ──
+            (function writeWelcome() {
+                var brand = (window.__WEBSSH_CONFIG__ && window.__WEBSSH_CONFIG__.botName) || 'Terminus';
+                var ver = (window.__WEBSSH_CONFIG__ && window.__WEBSSH_CONFIG__.botVersion) || '';
+
+                term.writeln('\x1b[1;38;5;141m╭──────────────────────────────────────────╮\x1b[0m');
+                term.writeln('\x1b[1;38;5;141m│\x1b[0m  \x1b[1;97m' + brand + '\x1b[0m  \x1b[38;5;245m— Live Console' + (ver ? ' v' + ver : '') + '\x1b[0m');
+                term.writeln('\x1b[1;38;5;141m╰──────────────────────────────────────────╯\x1b[0m');
+                term.writeln('');
+
+                if (TOKEN && AUTOCONNECT) {
+                    term.writeln('\x1b[38;5;245m  🔗 Secure link detected — auto-connecting…\x1b[0m');
+                } else if (TOKEN && !AUTOCONNECT) {
+                    term.writeln('\x1b[38;5;245m  🔗 Token loaded but no host info. Click \x1b[0m\x1b[1;38;5;141mConnect\x1b[0m\x1b[38;5;245m.\x1b[0m');
+                } else {
+                    term.writeln('\x1b[38;5;245m  Click \x1b[0m\x1b[1;38;5;141mConnect\x1b[0m\x1b[38;5;245m to start a secure session.\x1b[0m');
+                }
+                term.writeln('');
+                term.writeln('\x1b[38;5;240m  ──────────────────────────────────────────\x1b[0m');
+                term.writeln('');
+            })();
+
+            // ── state helpers ──
+            function setConnected(connected, host, user) {
+                isConnected = connected;
+                if (connected) {
+                    statusIndicator.classList.remove('warning');
+                    statusIndicator.classList.add('connected');
+                    statusText.textContent = 'Connected';
+                    tabTitle.textContent = user + '@' + host;
+                    disconnectBtn.disabled = false;
+                    sbSession.classList.add('active');
+                    sbSessionText.textContent = user + '@' + host;
+                    sbLatency.classList.add('active');
+                    sbLatencyText.textContent = 'connected';
+                } else {
+                    statusIndicator.classList.remove('connected', 'warning');
+                    statusText.textContent = 'Disconnected';
+                    tabTitle.textContent = ((window.__WEBSSH_CONFIG__ && window.__WEBSSH_CONFIG__.botName) || 'Terminus') + ' — SSH';
+                    disconnectBtn.disabled = true;
+                    sbSession.classList.remove('active');
+                    sbSessionText.textContent = 'No session';
+                    sbLatency.classList.remove('active');
+                    sbLatencyText.textContent = '—';
+                }
+            }
+
+            function setWarning(text) {
+                statusIndicator.classList.remove('connected');
+                statusIndicator.classList.add('warning');
+                statusText.textContent = text;
+            }
+
+            // ── generic API caller (always sends token) ──
+            async function apiCall(path, payload) {
+                payload = payload || {};
+                if (TOKEN) payload.token = TOKEN;
+                var res = await fetch(path, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                var data;
+                try { data = await res.json(); }
+                catch (je) { throw new Error('Invalid JSON from server (HTTP ' + res.status + ')'); }
+                return { ok: res.ok, status: res.status, data: data };
+            }
+
+            // ── PIN flow ──
+            function showPinPrompt(errorMsg, attemptsLeft) {
+                setWarning('PIN required');
+                if (pinNote) {
+                    if (errorMsg) {
+                        pinNote.className = 'modal-note error';
+                        pinNote.textContent = errorMsg + (attemptsLeft ? ' (' + attemptsLeft + ' left)' : '');
+                        pinNote.style.display = 'block';
+                    } else {
+                        pinNote.style.display = 'none';
+                    }
+                }
+                pinModal.classList.add('active');
+                setTimeout(function () { try { inPin.value = ''; inPin.focus(); } catch (e) {} }, 100);
+            }
+
+            if (pinForm) {
+                pinForm.addEventListener('submit', async function (e) {
+                    e.preventDefault();
+                    var pin = (inPin.value || '').trim();
+                    if (!pin || !/^\d{4,8}$/.test(pin)) {
+                        if (pinNote) {
+                            pinNote.className = 'modal-note error';
+                            pinNote.textContent = 'PIN must be 4–8 digits.';
+                            pinNote.style.display = 'block';
+                        }
+                        return;
+                    }
+                    pinSubmit.disabled = true;
+                    pinSubmit.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifying...';
+                    try {
+                        var out = await apiCall('/api/ssh/unlock', { token: TOKEN, pin: pin });
+                        if (out.data && out.data.success) {
+                            UNLOCK_KEY = out.data.key || '';
+                            window.__TERMINUS__.unlockKey = UNLOCK_KEY;
+                            pinModal.classList.remove('active');
+                            window.showToast('PIN accepted — connecting…', 'success');
+                            // Re-run the connect flow
+                            if (currentHost) {
+                                doConnect(currentHost, currentPort, currentUser, currentPass);
+                            } else if (AUTOCONNECT) {
+                                doConnect(AUTOCONNECT.host, AUTOCONNECT.port, AUTOCONNECT.username, AUTOCONNECT.password);
+                            }
+                        } else {
+                            var err = (out.data && out.data.error) || 'Incorrect PIN.';
+                            var code = out.data && out.data.code;
+                            if (code === 'too_many_pins' || code === 'token_used') {
+                                pinModal.classList.remove('active');
+                                term.writeln('\x1b[1;38;5;204m✗ ' + err + '\x1b[0m');
+                                setWarning('Link disabled');
+                                window.showToast(err, 'error');
+                            } else {
+                                showPinPrompt(err, null);
+                            }
+                        }
+                    } catch (err) {
+                        showPinPrompt('Network error: ' + err.message, null);
+                    } finally {
+                        pinSubmit.disabled = false;
+                        pinSubmit.innerHTML = '<i class="fas fa-unlock"></i> Unlock';
+                    }
+                });
+            }
+
+            // ── connect flow ──
+            async function doConnect(host, port, user, pass) {
+                if (!host || !port || !user || !pass) return;
+
+                currentHost = host;
+                currentPort = port;
+                currentUser = user;
+                currentPass = pass;
+
+                term.reset();
+                term.writeln('\x1b[38;5;245mConnecting to \x1b[1;97m' + user + '@' + host + ':' + port + '\x1b[0m\x1b[38;5;245m ...\x1b[0m');
+
+                try {
+                    var out = await apiCall('/api/ssh/connect', {
+                        host: host, port: parseInt(port, 10),
+                        username: user, password: pass,
+                        unlock_key: UNLOCK_KEY
+                    });
+                    var data = out.data || {};
+
+                    if (data.success) {
+                        sessionId = data.session_id;
+                        term.writeln('\x1b[1;38;5;114m✓ SSH connection established.\x1b[0m');
+                        term.writeln('\x1b[38;5;245m  Starting live stream...\x1b[0m\r\n');
+                        setConnected(true, host, user);
+                        lastIdx = 0;
+                        startPolling();
+                        term.focus();
+                        window.showToast('Connected to ' + user + '@' + host, 'success');
+                    } else if (data.code === 'pin_required') {
+                        showPinPrompt('This terminal link is PIN protected.', null);
+                    } else if (data.code === 'token_used') {
+                        term.writeln('\x1b[1;38;5;204m✗ ' + (data.error || 'Link expired.') + '\x1b[0m');
+                        setWarning('Link expired');
+                        window.showToast(data.error || 'Link expired', 'error');
+                    } else {
+                        var err = data.error || 'unknown error';
+                        term.writeln('\x1b[1;38;5;204m✗ Connection failed: ' + err + '\x1b[0m');
+                        setConnected(false);
+                        window.showToast('Connection failed: ' + err, 'error');
+                    }
+                } catch (err) {
+                    term.writeln('\x1b[1;38;5;204m✗ Connection error: ' + err.message + '\x1b[0m');
+                    setConnected(false);
+                    window.showToast('Connection error', 'error');
+                }
+            }
+
+            // ── manual connect form ──
+            if (sshForm) {
+                sshForm.addEventListener('submit', function (e) {
+                    e.preventDefault();
+                    connectModal.classList.remove('active');
+                    var host = inHost.value.trim();
+                    var port = inPort.value;
+                    var user = inUser.value.trim();
+                    var pass = inPass.value;
+                    if (!host || !port || !user || !pass) return;
+                    doConnect(host, port, user, pass);
+                });
+            }
+
+            // ── polling ──
+            function startPolling() {
+                if (pollTimer) clearInterval(pollTimer);
+                var tick = async function () {
+                    if (!sessionId || busyRead) return;
+                    busyRead = true;
+                    try {
+                        var out = await apiCall('/api/ssh/read', {
+                            session_id: sessionId, last_index: lastIdx
+                        });
+                        var data = out.data || {};
+                        if (data.success) {
+                            if (data.data) term.write(data.data);
+                            if (typeof data.last_index === 'number') lastIdx = data.last_index;
+                            if (data.closed) {
+                                term.writeln('\r\n\x1b[1;38;5;222m⚡ Connection closed by remote host.\x1b[0m');
+                                stopSession();
+                            }
+                        } else if (data.error) {
+                            term.writeln('\r\n\x1b[1;38;5;204m⚠ Error: ' + data.error + '\x1b[0m');
+                            stopSession();
+                        }
+                    } catch (_) { /* network hiccup — keep trying */ }
+                    busyRead = false;
+                };
+                pollTimer = setInterval(tick, 100);
+                tick();
+            }
+
+            function stopPolling() {
+                if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            }
+
+            function stopSession() {
+                stopPolling();
+                sessionId = null;
+                setConnected(false);
+            }
+
+            // ── keystrokes ──
+            term.onData(function (data) {
+                if (!sessionId) return;
+                apiCall('/api/ssh/write', { session_id: sessionId, data: data }).catch(function(){});
+            });
+
+            // ── resize ──
+            term.onResize(function (size) {
+                if (!sessionId) return;
+                apiCall('/api/ssh/resize', { session_id: sessionId, cols: size.cols, rows: size.rows }).catch(function(){});
+            });
+
+            // ── disconnect ──
+            disconnectBtn.addEventListener('click', async function () {
+                if (!sessionId) return;
+                try {
+                    await apiCall('/api/ssh/disconnect', { session_id: sessionId });
+                } catch (_) {}
+                stopSession();
+                term.writeln('\r\n\x1b[1;38;5;222m⚡ Session ended.\x1b[0m');
+                window.showToast('Disconnected', 'info');
+            });
+
+            // ── clear ──
+            clearBtn.addEventListener('click', function () {
+                term.clear();
+                term.focus();
+            });
+
+            // ── latency blink ──
+            setInterval(function () {
+                if (isConnected) {
+                    var ping = Math.floor(Math.random() * 14 + 3);
+                    sbLatencyText.textContent = ping + 'ms';
+                }
+            }, 2800);
+
+            // ── keyboard shortcuts ──
+            document.addEventListener('keydown', function (e) {
+                if (e.ctrlKey && e.shiftKey && (e.key === 'L' || e.key === 'l')) {
+                    e.preventDefault();
+                    clearBtn.click();
+                }
+            });
+
+            window.__term = term;
+            setTimeout(function () { try { term.focus(); } catch (e) {} }, 200);
+            document.getElementById('terminal').addEventListener('click', function(){
+                try { term.focus(); } catch (e) {}
+            });
+
+            // ── AUTO-CONNECT if backend gave us a trusted token + host info ──
+            if (TOKEN && AUTOCONNECT && AUTOCONNECT.host && AUTOCONNECT.port) {
+                setTimeout(function () {
+                    doConnect(
+                        AUTOCONNECT.host,
+                        AUTOCONNECT.port,
+                        AUTOCONNECT.username || 'root',
+                        AUTOCONNECT.password || ''
+                    );
+                }, 350);
+            } else if (TOKEN && !AUTOCONNECT) {
+                // Token present but no host: ask the user to click Connect
+                // (the backend will still enforce the token).
+                setTimeout(function () {
+                    term.writeln('\x1b[38;5;245m  ℹ️  Token link active. Enter host details and click \x1b[0m\x1b[1;38;5;141mConnect\x1b[0m\x1b[38;5;245m.\x1b[0m');
+                }, 300);
+            }
+        }
+
+        // ── fallback display ──
+        function showFallback() {
+            var t = document.getElementById('terminal');
+            var f = document.getElementById('terminalFallback');
+            if (t) t.style.display = 'none';
+            if (f) f.classList.add('show');
+        }
+
+        // ── hooks called by the loader above ──
+        window.__onXtermReady = function () {
+            try { bootApp(); }
+            catch (e) {
+                console.error('[Terminus] bootApp failed:', e);
+                showFallback();
+            }
+        };
+        window.__onXtermFail = function () {
+            showFallback();
+        };
+
+        // If loader already finished before this script ran, boot immediately
+        if (typeof window.__xtermReady === 'boolean') {
+            if (window.__xtermReady) window.__onXtermReady();
+            else window.__onXtermFail();
+        }
+    })();
+    </script>
+</body>
+</html>
