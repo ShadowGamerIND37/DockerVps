@@ -8998,7 +8998,8 @@ async def vps_network(ctx: commands.Context, container_name: str) -> None:
     else:
         add_field(embed, "🔌 Published", "No port forwards yet.", False)
     if vps:
-        add_field(embed, "🖥️ Node", f"`{vps['node_id']}` • `{unix_networking.BRIDGE_NAME}`", True)
+        add_field(embed, "🖥️ Node",
+                  f"`{vps['node_id']}` • network `{unix_config.DOCKER_DEFAULT_NETWORK}`", True)
     await _safe_edit(message, embed=embed)
 
 

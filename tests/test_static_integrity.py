@@ -212,3 +212,64 @@ def test_bot_module_names_resolve(bot_tree, bot_source):
     # `self`/`cls` and comprehension targets are handled by _module_level_names;
     # anything still missing is a genuine typo.
     assert not missing, f"possibly undefined names: {sorted(missing)}"
+
+
+def _unix_alias_map(tree: ast.Module) -> dict:
+    """
+    Map bot.py's ``unix_*`` import aliases to the real module objects.
+
+    Only aliases that name a *module* are collected.  Aliases bound to a
+    function (``run_in_thread as unix_run_in_thread``) are skipped — attribute
+    access on those is not the failure mode this guard targets.
+    """
+    import importlib
+
+    aliases = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        module = node.module or ""
+        if not module.startswith("unixnodes"):
+            continue
+        for alias in node.names:
+            name = alias.asname or ""
+            if not name.startswith("unix_"):
+                continue
+            try:
+                aliases[name] = importlib.import_module(f"{module}.{alias.name}")
+            except ImportError:
+                pass  # a function/class, not a submodule — nothing to check
+    return aliases
+
+
+def test_every_unix_attribute_access_resolves(bot_tree):
+    """
+    Every `unix_<alias>.<ATTR>` in bot.py must exist on the real module.
+
+    This is the bug pyflakes cannot see. `unix_networking.BRIDGE_NAME` was
+    shipped to `main` and broke `!vps-network` at runtime: pyflakes reports
+    **zero** undefined names for it, because `unix_networking` is a perfectly
+    valid module — only the attribute is missing. Python resolves the attribute
+    when the line executes, so `import bot` is clean too.
+
+    Resolving the accesses against the imported modules turns that whole class
+    of typo into a test failure.
+    """
+    aliases = _unix_alias_map(bot_tree)
+    assert aliases, "no unixnodes aliases were found in bot.py — the check is broken"
+
+    bad = []
+    for node in ast.walk(bot_tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        base = node.value
+        if not isinstance(base, ast.Name) or base.id not in aliases:
+            continue
+        module = aliases[base.id]
+        if not hasattr(module, node.attr):
+            bad.append(f"{base.id}.{node.attr} (line {node.lineno})")
+
+    assert not bad, (
+        "bot.py reads attributes that do not exist on the unixnodes modules — "
+        "these raise AttributeError at runtime, not at import:\n  "
+        + "\n".join(sorted(set(bad))))
