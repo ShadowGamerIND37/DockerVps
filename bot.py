@@ -5202,7 +5202,7 @@ async def ping(ctx: commands.Context) -> None:
     await _safe_edit(message, embed=embed, content=None)
 
 
-@bot.command(name="uptime", aliases=["host-uptime"])
+@bot.hybrid_command(name="uptime", aliases=["host-uptime"])
 @with_typing
 @command_timeout(60)
 async def uptime(ctx: commands.Context) -> None:
@@ -5227,7 +5227,7 @@ async def uptime(ctx: commands.Context) -> None:
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="about", aliases=["info-bot"])
+@bot.hybrid_command(name="about", aliases=["info-bot"])
 @with_typing
 @command_timeout(60)
 async def about(ctx: commands.Context) -> None:
@@ -5255,7 +5255,7 @@ async def about(ctx: commands.Context) -> None:
 
 # ── 9.0 v10 LIVE COMMANDS ────────────────────────────────────────────────────
 
-@bot.command(name="live", aliases=["livedash", "platform-live"])
+@bot.hybrid_command(name="live", aliases=["livedash", "platform-live"])
 @is_admin()
 @with_typing
 @command_timeout(90)
@@ -5274,7 +5274,7 @@ async def live_command(ctx: commands.Context) -> None:
     view.start_live(message)
 
 
-@bot.command(name="top", aliases=["livetop", "leaderboard"])
+@bot.hybrid_command(name="top", aliases=["livetop", "leaderboard"])
 @is_admin()
 @with_typing
 @command_timeout(120)
@@ -5314,7 +5314,7 @@ async def dashboard_command(ctx: commands.Context) -> None:
     view.start_live(message)
 
 
-@bot.command(name="graph", aliases=["chart", "history"])
+@bot.hybrid_command(name="graph", aliases=["chart", "history"])
 @with_typing
 @command_timeout(90)
 async def graph_command(ctx: commands.Context, target: str = "host", points: int = GRAPH_POINTS) -> None:
@@ -5371,7 +5371,7 @@ async def graph_command(ctx: commands.Context, target: str = "host", points: int
     await ctx.send(embed=embed)
 
 
-@bot.command(name="anim", aliases=["animations"])
+@bot.hybrid_command(name="anim", aliases=["animations"])
 @is_admin()
 async def anim_toggle(ctx: commands.Context, state: str = None) -> None:
     """
@@ -5390,7 +5390,7 @@ async def anim_toggle(ctx: commands.Context, state: str = None) -> None:
     await ctx.send(embed=embed)
 
 
-@bot.command(name="speed", aliases=["animspeed"])
+@bot.hybrid_command(name="speed", aliases=["animspeed"])
 @is_admin()
 async def anim_speed(ctx: commands.Context, multiplier: float = None) -> None:
     """
@@ -7436,6 +7436,7 @@ class CreateVpsModal(discord.ui.Modal, title="Create a VPS"):
             return
 
         view = NodeSelectView(interaction.user.id, owner, ram_gb, cpu, disk_gb, days)
+        await view.build_options()
         embed = create_embed("Select a node", f"Creating **{ram_gb} GB / {cpu} vCPU / {disk_gb} GB** for {owner.mention}"
                                               f" • lifetime {days} days", COLORS["node"])
         view.message = await interaction.followup.send(embed=embed, view=view, wait=True)
@@ -7579,7 +7580,7 @@ class OSSelectView(PanelView):
             self.stop()
 
 
-@bot.command(name="create", aliases=["create-vps", "newvps"])
+@bot.hybrid_command(name="create", aliases=["create-vps", "newvps"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -7671,10 +7672,10 @@ async def fraud_report(user: discord.abc.User, *, ip_hint: str) -> Dict[str, Any
             "owned": owned, "accounts_same_ip": accounts_same_ip}
 
 
-@bot.command(name="vps", aliases=["myvps-create"])
+@bot.hybrid_command(name="vps", aliases=["myvps-create"])
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
-async def vps_command(ctx: commands.Context, action: str = None, *args: str) -> None:
+async def vps_command(ctx: commands.Context, action: str = None, *, args: str = "") -> None:
     """
     Self-service VPS.
 
@@ -7685,6 +7686,7 @@ async def vps_command(ctx: commands.Context, action: str = None, *args: str) -> 
     !vps specs      → what you get
     """
     action = (action or "help").lower().strip()
+    args = tuple(shlex.split(args or ""))
 
     if action in ("create", "new") and PUBLIC_VPS_ENABLED:
         await public_create(ctx)
@@ -8092,7 +8094,7 @@ async def public_renew(ctx: commands.Context) -> None:
     await ctx.send(embed=create_embed("Renew a server", "Pick one below.", COLORS["success"]), view=view)
 
 
-@bot.command(name="generate-password")
+@bot.hybrid_command(name="generate-password")
 @is_admin()
 async def generate_password(ctx: commands.Context) -> None:
     """Generate a strong random password (never sent to anyone else)."""
@@ -8126,7 +8128,7 @@ def display_user(user: Optional[discord.abc.User], fallback_id: Union[int, str])
 
 # ── 11.1 Overview dashboards ─────────────────────────────────────────────────
 
-@bot.command(name="list-all", aliases=["allvps", "vps-all", "vps-list"])
+@bot.hybrid_command(name="list-all", aliases=["allvps", "vps-all", "vps-list"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -8175,7 +8177,7 @@ async def list_all_vps(ctx: commands.Context) -> None:
     await Paginator(ctx.author.id, pages).send(ctx)
 
 
-@bot.command(name="serverstats", aliases=["stats-server", "platform"])
+@bot.hybrid_command(name="serverstats", aliases=["stats-server", "platform"])
 @is_admin()
 @with_typing
 @command_timeout(60)
@@ -8241,7 +8243,7 @@ async def server_stats(ctx: commands.Context) -> None:
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="status", aliases=["system-status"])
+@bot.hybrid_command(name="status", aliases=["system-status"])
 @is_admin()
 @with_typing
 @command_timeout(90)
@@ -8295,7 +8297,7 @@ async def system_status(ctx: commands.Context) -> None:
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="userinfo", aliases=["whois"])
+@bot.hybrid_command(name="userinfo", aliases=["whois"])
 @is_admin()
 @with_typing
 @command_timeout(60)
@@ -8330,7 +8332,7 @@ async def user_info(ctx: commands.Context, user: discord.User = None) -> None:
     await ctx.send(embed=embed)
 
 
-@bot.command(name="vpsinfo", aliases=["vps-info", "inspect"])
+@bot.hybrid_command(name="vpsinfo", aliases=["vps-info", "inspect"])
 @is_admin()
 @with_typing
 @command_timeout(60)
@@ -8385,7 +8387,7 @@ async def vps_info(ctx: commands.Context, container_name: str = None) -> None:
 
 # ── 11.2 Resource + lifecycle admin ─────────────────────────────────────────
 
-@bot.command(name="vps-stats", aliases=["livestats"])
+@bot.hybrid_command(name="vps-stats", aliases=["livestats"])
 @is_admin()
 @with_typing
 async def vps_stats(ctx: commands.Context, container_name: str) -> None:
@@ -8401,7 +8403,7 @@ async def vps_stats(ctx: commands.Context, container_name: str) -> None:
     await view.start(message)
 
 
-@bot.command(name="add-resources", aliases=["resize-vps", "upgrade"])
+@bot.hybrid_command(name="add-resources", aliases=["resize-vps", "upgrade"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -8479,7 +8481,7 @@ async def resize_vps(ctx: commands.Context, container_name: str, ram_gb: int = 0
     await panel.finish(final_embed=embed)
 
 
-@bot.command(name="suspend-vps", aliases=["lock-vps"])
+@bot.hybrid_command(name="suspend-vps", aliases=["lock-vps"])
 @is_admin()
 @with_typing
 @command_timeout(120)
@@ -8516,7 +8518,7 @@ async def suspend_vps(ctx: commands.Context, container_name: str, *, reason: str
         pass
 
 
-@bot.command(name="unsuspend-vps", aliases=["unlock-vps"])
+@bot.hybrid_command(name="unsuspend-vps", aliases=["unlock-vps"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -8562,7 +8564,7 @@ async def unsuspend_vps(ctx: commands.Context, container_name: str) -> None:
         pass
 
 
-@bot.command(name="restart-vps")
+@bot.hybrid_command(name="restart-vps")
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -8593,7 +8595,7 @@ async def restart_vps(ctx: commands.Context, container_name: str) -> None:
     await panel.finish(final_embed=success_embed("Restarted", f"`{container_name}` is back online."))
 
 
-@bot.command(name="delete-vps", aliases=["destroy-vps"])
+@bot.hybrid_command(name="delete-vps", aliases=["destroy-vps"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -8662,7 +8664,7 @@ async def delete_vps(ctx: commands.Context, user: discord.User, target: str = No
         pass
 
 
-@bot.command(name="set-expiration", aliases=["expire-in"])
+@bot.hybrid_command(name="set-expiration", aliases=["expire-in"])
 @is_admin()
 async def set_expiration(ctx: commands.Context, container_name: str, days: int) -> None:
     """Set how long a container lives (0 = never expires)."""
@@ -8678,7 +8680,7 @@ async def set_expiration(ctx: commands.Context, container_name: str, days: int) 
     await ctx.send(embed=success_embed("Expiration Updated", f"`{container_name}` {text}."))
 
 
-@bot.command(name="renew-vps")
+@bot.hybrid_command(name="renew-vps")
 @is_admin()
 async def renew_vps(ctx: commands.Context, container_name: str, days: int = None) -> None:
     """Extend (and unsuspend) a container."""
@@ -8704,7 +8706,7 @@ async def renew_vps(ctx: commands.Context, container_name: str, days: int = None
         pass
 
 
-@bot.command(name="whitelist-vps")
+@bot.hybrid_command(name="whitelist-vps")
 @is_admin()
 async def whitelist_vps(ctx: commands.Context, container_name: str, action: str = "add") -> None:
     """Exempt a container from auto-suspension."""
@@ -8719,7 +8721,7 @@ async def whitelist_vps(ctx: commands.Context, container_name: str, action: str 
                                        f"`{container_name}` is {'whitelisted ✅' if enable else 'no longer whitelisted'}."))
 
 
-@bot.command(name="suspension-logs", aliases=["susplog"])
+@bot.hybrid_command(name="suspension-logs", aliases=["susplog"])
 @is_admin()
 async def suspension_logs(ctx: commands.Context, container_name: str = None) -> None:
     """Show the suspension history for one container or the whole platform."""
@@ -8753,7 +8755,7 @@ async def suspension_logs(ctx: commands.Context, container_name: str = None) -> 
                                                page_size=8, field_name="Events")).send(ctx)
 
 
-@bot.command(name="apply-permissions", aliases=["fix-perms"])
+@bot.hybrid_command(name="apply-permissions", aliases=["fix-perms"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -8799,7 +8801,7 @@ async def apply_permissions(ctx: commands.Context, container_name: str) -> None:
         f"• persistent volume preserved"))
 
 
-@bot.command(name="repair-ports", aliases=["fix-ports"])
+@bot.hybrid_command(name="repair-ports", aliases=["fix-ports"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -8815,7 +8817,7 @@ async def repair_ports(ctx: commands.Context, container_name: str) -> None:
     await _safe_edit(message, embed=success_embed("Ports Repaired", f"Restored **{restored}** forward(s)."))
 
 
-@bot.command(name="migrate-vps", aliases=["move-vps"])
+@bot.hybrid_command(name="migrate-vps", aliases=["move-vps"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -8870,7 +8872,7 @@ async def migrate_vps(ctx: commands.Context, container_name: str, target_node_id
 
 # ── 11.3 Diagnostics ─────────────────────────────────────────────────────────
 
-@bot.command(name="exec", aliases=["sh", "console"])
+@bot.hybrid_command(name="exec", aliases=["sh", "console"])
 @is_admin()
 @with_typing
 @command_timeout(180)
@@ -8894,7 +8896,7 @@ async def exec_command(ctx: commands.Context, container_name: str, *, command: s
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="lxc-list", aliases=["containers", "docker-list", "docker-ps"])
+@bot.hybrid_command(name="lxc-list", aliases=["containers", "docker-list", "docker-ps"])
 @is_admin()
 @with_typing
 @command_timeout(90)
@@ -8935,7 +8937,7 @@ async def lxc_list(ctx: commands.Context, node_id: int = None) -> None:
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="vps-logs", aliases=["logs"])
+@bot.hybrid_command(name="vps-logs", aliases=["logs"])
 @is_admin()
 @with_typing
 @command_timeout(120)
@@ -8957,7 +8959,7 @@ async def vps_logs(ctx: commands.Context, container_name: str, lines: int = 30) 
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="vps-processes", aliases=["ps"])
+@bot.hybrid_command(name="vps-processes", aliases=["ps"])
 @is_admin()
 @with_typing
 @command_timeout(90)
@@ -8976,7 +8978,7 @@ async def vps_processes(ctx: commands.Context, container_name: str) -> None:
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="vps-network", aliases=["netinfo"])
+@bot.hybrid_command(name="vps-network", aliases=["netinfo"])
 @is_admin()
 @with_typing
 @command_timeout(90)
@@ -9003,7 +9005,7 @@ async def vps_network(ctx: commands.Context, container_name: str) -> None:
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="vps-uptime")
+@bot.hybrid_command(name="vps-uptime")
 @is_admin()
 @with_typing
 async def vps_uptime(ctx: commands.Context, container_name: str) -> None:
@@ -9017,7 +9019,7 @@ async def vps_uptime(ctx: commands.Context, container_name: str) -> None:
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="vps-password", aliases=["passwords"])
+@bot.hybrid_command(name="vps-password", aliases=["passwords"])
 @is_admin()
 @with_typing
 async def vps_password(ctx: commands.Context, container_name: str = None) -> None:
@@ -9057,7 +9059,7 @@ async def vps_password(ctx: commands.Context, container_name: str = None) -> Non
     await ctx.send(embed=success_embed("Sent Privately", "Full credential list was sent to your DMs."))
 
 
-@bot.command(name="node-check", aliases=["nodeinfo"])
+@bot.hybrid_command(name="node-check", aliases=["nodeinfo"])
 @is_admin()
 @with_typing
 @command_timeout(90)
@@ -9109,7 +9111,7 @@ async def node_check(ctx: commands.Context, node_id: int = None) -> None:
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="resource-check", aliases=["runmon"])
+@bot.hybrid_command(name="resource-check", aliases=["runmon"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -9146,7 +9148,7 @@ async def resource_check(ctx: commands.Context) -> None:
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="thresholds")
+@bot.hybrid_command(name="thresholds")
 @is_admin()
 async def show_thresholds(ctx: commands.Context) -> None:
     """Show the current abuse thresholds."""
@@ -9156,7 +9158,7 @@ async def show_thresholds(ctx: commands.Context) -> None:
     await ctx.send(embed=embed)
 
 
-@bot.command(name="set-threshold")
+@bot.hybrid_command(name="set-threshold")
 @is_admin()
 async def set_threshold(ctx: commands.Context, cpu: int, ram: int) -> None:
     """Set the abuse thresholds used by monitoring and `resource-check`."""
@@ -9169,7 +9171,7 @@ async def set_threshold(ctx: commands.Context, cpu: int, ram: int) -> None:
     await ctx.send(embed=success_embed("Thresholds Updated", f"CPU `{CPU_THRESHOLD}%` • RAM `{RAM_THRESHOLD}%`"))
 
 
-@bot.command(name="set-status", aliases=["presence"])
+@bot.hybrid_command(name="set-status", aliases=["presence"])
 @is_admin()
 async def set_status(ctx: commands.Context, activity: str, *, text: str) -> None:
     """Change the bot presence. activity = playing|watching|listening|competing|clear"""
@@ -9239,7 +9241,7 @@ class SelectVPSView(discord.ui.View):
         self.stop()
 
 
-@bot.command(name="vps-delete", aliases=["vpsdelete", "vps-remove", "remove-vps"])
+@bot.hybrid_command(name="vps-delete", aliases=["vpsdelete", "vps-remove", "remove-vps"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -9324,7 +9326,7 @@ async def vps_delete(ctx: commands.Context, user: discord.User) -> None:
         await _safe_edit(loading_msg, embed=error_embed("Deletion Failed", f"Error: {str(e)}"))
 
 
-@bot.command(name="vps-suspend", aliases=["vpssuspend", "vps-ban", "ban-vps"])
+@bot.hybrid_command(name="vps-suspend", aliases=["vpssuspend", "vps-ban", "ban-vps"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -9404,7 +9406,7 @@ async def vps_suspend(ctx: commands.Context, user: discord.User, *, reason: str 
         await _safe_edit(loading_msg, embed=error_embed("Suspension Failed", f"Error: {str(e)}"))
 
 
-@bot.command(name="vps-unsuspend", aliases=["vpsunsuspend", "vps-unban", "unban-vps"])
+@bot.hybrid_command(name="vps-unsuspend", aliases=["vpsunsuspend", "vps-unban", "unban-vps"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -9475,7 +9477,7 @@ async def vps_unsuspend(ctx: commands.Context, user: discord.User) -> None:
         await _safe_edit(loading_msg, embed=error_embed("Unsuspension Failed", f"Error: {str(e)}"))
 
 
-@bot.command(name="vps-timeout-remove", aliases=["vps-timeout", "timeout-remove", "remove-timeout"])
+@bot.hybrid_command(name="vps-timeout-remove", aliases=["vps-timeout", "timeout-remove", "remove-timeout"])
 @is_admin()
 async def vps_timeout_remove(ctx: commands.Context, user: discord.User) -> None:
     """
@@ -9515,7 +9517,7 @@ async def vps_timeout_remove(ctx: commands.Context, user: discord.User) -> None:
         ))
 
 
-@bot.command(name="stop-vps-all", aliases=["emergency-stop"])
+@bot.hybrid_command(name="stop-vps-all", aliases=["emergency-stop"])
 @is_main_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -9570,7 +9572,7 @@ async def stop_all_vps(ctx: commands.Context) -> None:
 # ── 11.4 Container Management ──────────────────────────────────────────────────
 
 
-@bot.command(name="show-all-vps", aliases=["list-lxc", "lxc-all"])
+@bot.hybrid_command(name="show-all-vps", aliases=["list-lxc", "lxc-all"])
 @is_admin()
 @with_typing
 @command_timeout(120)
@@ -9655,7 +9657,7 @@ async def show_all_vps(ctx: commands.Context) -> None:
         await _safe_edit(message, embed=error_embed("Scan Failed", truncate_text(str(exc), 700)))
 
 
-@bot.command(name="lxc-delete", aliases=["delete-container"])
+@bot.hybrid_command(name="lxc-delete", aliases=["delete-container"])
 @is_admin()
 @with_typing
 @command_timeout(120)
@@ -9715,7 +9717,7 @@ async def lxc_delete(ctx: commands.Context, container_name: str, *, reason: str 
         await _safe_edit(message, embed=error_embed("Deletion Failed", truncate_text(exc, 700)))
 
 
-@bot.command(name="delete-useless-vps", aliases=["cleanup-orphaned", "delete-orphaned"])
+@bot.hybrid_command(name="delete-useless-vps", aliases=["cleanup-orphaned", "delete-orphaned"])
 @is_admin()
 @with_typing
 @command_timeout(300)
@@ -9862,7 +9864,7 @@ async def delete_useless_vps(ctx: commands.Context, node_id: int = None) -> None
     await panel.finish(final_embed=final_embed)
 
 
-@bot.command(name="lxc-assign", aliases=["adopt-container", "assign-vps"])
+@bot.hybrid_command(name="lxc-assign", aliases=["adopt-container", "assign-vps"])
 @is_admin()
 @with_typing
 @command_timeout(60)
@@ -9933,10 +9935,10 @@ async def lxc_assign(ctx: commands.Context, user: discord.User, container_name: 
 
 # ── 11.5 Ports / admins / platform maintenance ───────────────────────────────
 
-@bot.command(name="ports")
+@bot.hybrid_command(name="ports")
 @with_typing
 @command_timeout(60)
-async def ports_command(ctx: commands.Context, subcommand: str = None, *args: str) -> None:
+async def ports_command(ctx: commands.Context, subcommand: str = None, *, args: str = "") -> None:
     """
     Port forwarding.
 
@@ -9946,6 +9948,7 @@ async def ports_command(ctx: commands.Context, subcommand: str = None, *args: st
     !ports remove <forward_id>      → delete a forward
     """
     subcommand = (subcommand or "panel").lower()
+    args = tuple(shlex.split(args or ""))
 
     if subcommand == "list":
         forwards = await run_blocking(get_user_forwards, ctx.author.id)
@@ -10013,7 +10016,7 @@ async def ports_command(ctx: commands.Context, subcommand: str = None, *args: st
     await ctx.send(embed=embed, view=view)
 
 
-@bot.command(name="ports-add-user", aliases=["give-ports"])
+@bot.hybrid_command(name="ports-add-user", aliases=["give-ports"])
 @is_admin()
 async def ports_add_user(ctx: commands.Context, amount: int, user: discord.User) -> None:
     """Give a user extra port-forwarding slots."""
@@ -10029,7 +10032,7 @@ async def ports_add_user(ctx: commands.Context, amount: int, user: discord.User)
         pass
 
 
-@bot.command(name="ports-remove-user", aliases=["take-ports"])
+@bot.hybrid_command(name="ports-remove-user", aliases=["take-ports"])
 @is_admin()
 async def ports_remove_user(ctx: commands.Context, amount: int, user: discord.User) -> None:
     """Remove port-forwarding slots from a user."""
@@ -10039,7 +10042,7 @@ async def ports_remove_user(ctx: commands.Context, amount: int, user: discord.Us
     await ctx.send(embed=success_embed("Slots Removed", f"`-{amount}` slots from {user.mention} (now `{total}`)."))
 
 
-@bot.command(name="ports-revoke")
+@bot.hybrid_command(name="ports-revoke")
 @is_admin()
 async def ports_revoke(ctx: commands.Context, forward_id: int) -> None:
     """Force-remove any forward by id."""
@@ -10057,7 +10060,7 @@ async def ports_revoke(ctx: commands.Context, forward_id: int) -> None:
 # catalogue, per-node quota support, port reservation history, volume backups and
 # the security policy every customer container is created with.
 
-@bot.command(name="images", aliases=["image-list", "os-list"])
+@bot.hybrid_command(name="images", aliases=["image-list", "os-list"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -10074,7 +10077,7 @@ async def images_cmd(ctx: commands.Context) -> None:
     await ctx.send(embed=embed)
 
 
-@bot.command(name="image-add")
+@bot.hybrid_command(name="image-add")
 @is_admin()
 @with_typing
 @command_timeout(tgd_config.DOCKER_IMAGE_PULL_TIMEOUT)
@@ -10092,7 +10095,7 @@ async def image_add(ctx: commands.Context, reference: str, *, label: str = "") -
         "Users can now select it when creating a VPS."))
 
 
-@bot.command(name="image-remove")
+@bot.hybrid_command(name="image-remove")
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -10108,7 +10111,7 @@ async def image_remove(ctx: commands.Context, *, reference: str) -> None:
                                        "Existing VPS on that image keep running."))
 
 
-@bot.command(name="docker-quota")
+@bot.hybrid_command(name="docker-quota")
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -10133,7 +10136,7 @@ async def docker_quota(ctx: commands.Context, node_id: int = None) -> None:
     await ctx.send(embed=embed)
 
 
-@bot.command(name="port-history", aliases=["ports-history"])
+@bot.hybrid_command(name="port-history", aliases=["ports-history"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -10159,7 +10162,7 @@ async def port_history_cmd(ctx: commands.Context, container_name: str, limit: in
     await ctx.send(embed=embed)
 
 
-@bot.command(name="docker-orphans")
+@bot.hybrid_command(name="docker-orphans")
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -10185,7 +10188,7 @@ async def docker_orphans(ctx: commands.Context, node_id: int = None) -> None:
     await ctx.send(embed=embed)
 
 
-@bot.command(name="docker-orphan-remove")
+@bot.hybrid_command(name="docker-orphan-remove")
 @is_main_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -10201,7 +10204,7 @@ async def docker_orphan_remove(ctx: commands.Context, node_id: int, *, container
     await ctx.send(embed=success_embed("Orphan Removed", f"`{container_name}` deleted from node `{node_id}`."))
 
 
-@bot.command(name="docker-policy")
+@bot.hybrid_command(name="docker-policy")
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -10223,7 +10226,7 @@ async def docker_policy(ctx: commands.Context) -> None:
     await ctx.send(embed=embed)
 
 
-@bot.command(name="vps-backup")
+@bot.hybrid_command(name="vps-backup")
 @is_admin()
 @with_typing
 @command_timeout(BACKUP_TIMEOUT)
@@ -10253,7 +10256,7 @@ async def vps_backup(ctx: commands.Context, container_name: str, *, note: str = 
     await ctx.send(embed=embed)
 
 
-@bot.command(name="vps-backups")
+@bot.hybrid_command(name="vps-backups")
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -10272,7 +10275,7 @@ async def vps_backups(ctx: commands.Context, container_name: str = None) -> None
     await ctx.send(embed=embed)
 
 
-@bot.command(name="vps-backup-verify")
+@bot.hybrid_command(name="vps-backup-verify")
 @is_admin()
 @with_typing
 @command_timeout(BACKUP_TIMEOUT)
@@ -10288,7 +10291,7 @@ async def vps_backup_verify(ctx: commands.Context, *, backup_name: str) -> None:
     await ctx.send(embed=embed)
 
 
-@bot.command(name="vps-restore")
+@bot.hybrid_command(name="vps-restore")
 @is_main_admin()
 @with_typing
 @command_timeout(BACKUP_TIMEOUT)
@@ -10313,7 +10316,7 @@ async def vps_restore(ctx: commands.Context, container_name: str, *, backup_name
         f"SSH port `{outcome.get('ssh_host_port')}` • volume `{outcome.get('volume_name')}`"))
 
 
-@bot.command(name="vps-backup-prune")
+@bot.hybrid_command(name="vps-backup-prune")
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -10329,7 +10332,7 @@ async def vps_backup_prune(ctx: commands.Context, node_id: int = None) -> None:
     await ctx.send(embed=embed)
 
 
-@bot.command(name="admin-add")
+@bot.hybrid_command(name="admin-add")
 @is_main_admin()
 async def admin_add(ctx: commands.Context, user: discord.User) -> None:
     """Grant admin rights (main admin only)."""
@@ -10346,7 +10349,7 @@ async def admin_add(ctx: commands.Context, user: discord.User) -> None:
         pass
 
 
-@bot.command(name="admin-remove")
+@bot.hybrid_command(name="admin-remove")
 @is_main_admin()
 async def admin_remove(ctx: commands.Context, user: discord.User) -> None:
     """Revoke admin rights (main admin only)."""
@@ -10361,7 +10364,7 @@ async def admin_remove(ctx: commands.Context, user: discord.User) -> None:
     await ctx.send(embed=success_embed("Admin Removed", f"{user.mention} lost admin access."))
 
 
-@bot.command(name="admin-list", aliases=["admins"])
+@bot.hybrid_command(name="admin-list", aliases=["admins"])
 async def admin_list(ctx: commands.Context) -> None:
     """List everyone with admin access."""
     embed = create_embed("Admin Team", f"`{len(_admin_cache)}` account(s) with elevated access", COLORS["node"])
@@ -10375,7 +10378,7 @@ async def admin_list(ctx: commands.Context) -> None:
     await ctx.send(embed=embed)
 
 
-@bot.command(name="backup-db", aliases=["backup"])
+@bot.hybrid_command(name="backup-db", aliases=["backup"])
 @is_admin()
 @with_typing
 @command_timeout(120)
@@ -10393,7 +10396,7 @@ async def backup_db(ctx: commands.Context) -> None:
     await _safe_edit(message, embed=embed)
 
 
-@bot.command(name="audit-log", aliases=["audit"])
+@bot.hybrid_command(name="audit-log", aliases=["audit"])
 @is_admin()
 async def audit_log_command(ctx: commands.Context, action: str = None) -> None:
     """Recent security-relevant actions."""
@@ -10413,7 +10416,7 @@ async def audit_log_command(ctx: commands.Context, action: str = None) -> None:
         page_size=8, field_name="Events")).send(ctx)
 
 
-@bot.command(name="broadcast", aliases=["announce"])
+@bot.hybrid_command(name="broadcast", aliases=["announce"])
 @is_main_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -10447,7 +10450,7 @@ async def broadcast(ctx: commands.Context, *, message: str) -> None:
     await panel.finish(final_embed=success_embed("Broadcast Sent", f"Delivered `{sent}` • failed `{failed}`"))
 
 
-@bot.command(name="reset-ratelimit", aliases=["unblock"])
+@bot.hybrid_command(name="reset-ratelimit", aliases=["unblock"])
 @is_admin()
 async def reset_ratelimit(ctx: commands.Context, user: discord.User) -> None:
     """Clear a user's rate-limit timeout."""
@@ -10456,7 +10459,7 @@ async def reset_ratelimit(ctx: commands.Context, user: discord.User) -> None:
     await ctx.send(embed=success_embed("Rate Limit Cleared", f"{user.mention} can use commands again."))
 
 
-@bot.command(name="reload-cache", aliases=["refresh-admins"])
+@bot.hybrid_command(name="reload-cache", aliases=["refresh-admins"])
 @is_main_admin()
 async def reload_cache(ctx: commands.Context) -> None:
     """Reload the admin cache from the database."""
@@ -10532,7 +10535,7 @@ bot.tree.add_command(context_vps_info)
 
 # ── 9.3 Sharing & ownership ──────────────────────────────────────────────────
 
-@bot.command(name="share-user", aliases=["sharevps", "share"])
+@bot.hybrid_command(name="share-user", aliases=["sharevps", "share"])
 @with_typing
 @command_timeout(60)
 async def share_user(ctx: commands.Context, user: discord.User, vps_number: int) -> None:
@@ -10577,7 +10580,7 @@ async def share_user(ctx: commands.Context, user: discord.User, vps_number: int)
         pass
 
 
-@bot.command(name="share-ruser", aliases=["unshare", "revoke-share"])
+@bot.hybrid_command(name="share-ruser", aliases=["unshare", "revoke-share"])
 @with_typing
 @command_timeout(60)
 async def revoke_share(ctx: commands.Context, user: discord.User, vps_number: int) -> None:
@@ -10604,7 +10607,7 @@ async def revoke_share(ctx: commands.Context, user: discord.User, vps_number: in
         pass
 
 
-@bot.command(name="manage-shared", aliases=["shared"])
+@bot.hybrid_command(name="manage-shared", aliases=["shared"])
 @with_typing
 @command_timeout(90)
 async def manage_shared_vps(ctx: commands.Context, owner: discord.User, vps_number: int) -> None:
@@ -10627,7 +10630,7 @@ async def manage_shared_vps(ctx: commands.Context, owner: discord.User, vps_numb
     view.message = await ctx.send(embed=embed, view=view)
 
 
-@bot.command(name="transfer-vps", aliases=["vps-transfer", "give-vps", "vps-owner"])
+@bot.hybrid_command(name="transfer-vps", aliases=["vps-transfer", "give-vps", "vps-owner"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -10670,7 +10673,7 @@ async def transfer_vps(ctx: commands.Context, container_name: str, user: discord
         pass
 
 
-@bot.command(name="ssh", aliases=["ssh-command"])
+@bot.hybrid_command(name="ssh", aliases=["ssh-command"])
 @with_typing
 @command_timeout(60)
 async def ssh_command(ctx: commands.Context, container_name: str = None, vps_number: int = None) -> None:
@@ -10723,7 +10726,7 @@ async def ssh_command(ctx: commands.Context, container_name: str = None, vps_num
 
 
 # v8-era aliases kept alive so nobody's muscle memory breaks.
-@bot.command(name="stats", aliases=["stats-alias"])
+@bot.hybrid_command(name="stats", aliases=["stats-alias"])
 @with_typing
 async def stats_alias(ctx: commands.Context) -> None:
     """Alias for `serverstats` (admin)."""
@@ -10733,7 +10736,7 @@ async def stats_alias(ctx: commands.Context) -> None:
     await server_stats(ctx)
 
 
-@bot.command(name="info")
+@bot.hybrid_command(name="info")
 @with_typing
 async def info_alias(ctx: commands.Context, user: discord.User = None) -> None:
     """Alias for `userinfo` (admin) or a short self-summary."""
@@ -11045,7 +11048,7 @@ class NodeManageView(LivePanelView):
         self.stop()
 
 
-@bot.command(name="node", aliases=["nodes"])
+@bot.hybrid_command(name="node", aliases=["nodes"])
 @is_admin()
 @with_typing
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
@@ -11503,7 +11506,7 @@ async def slash_help(interaction: discord.Interaction, search: Optional[str] = N
             pass
 
 
-@bot.command(name="quickhelp", aliases=["quick"])
+@bot.hybrid_command(name="quickhelp", aliases=["quick"])
 async def quick_help(ctx: commands.Context) -> None:
     """Compact cheat-sheet for the most common tasks."""
     is_admin_user = is_admin_id(ctx.author.id)

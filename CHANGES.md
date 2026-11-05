@@ -3,8 +3,8 @@
 What was preserved, what changed, and what could not be verified.
 
 Verified by diffing this tree against commit `49bfff0` (v10) and by running the
-test suite. Counts below come from parsing `@bot.command` decorators in both
-files, not from memory.
+test suite. Command counts below come from the live prefix and application-command
+inventories, not from memory.
 
 ---
 
@@ -60,7 +60,7 @@ Argon2id/PBKDF2 `hash_password`/`verify_password`, `validate_ssh_target`,
 | Web SSH server | 737-line Flask/Paramiko impl in `bot.py` | `tgdbot/web/terminal.py` |
 | Progress reporting | direct `await` from the loop | `PanelPump` bridging worker threads |
 
-**`bot.py` shrank from 12,259 to 11,636 lines** while gaining 13 commands, because
+**`bot.py` shrank from 12,259 to 11,640 lines** while gaining 13 commands, because
 the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 
 ---
@@ -83,7 +83,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 | `tgdbot/services/` | Provisioning, lifecycle, backups, expiration, nodes |
 | `tgdbot/web/terminal.py` | Web SSH terminal |
 | `tgdbot/scripts/` | Installer, migration, healthcheck, acceptance test |
-| `tests/` | 109 tests + a fake Docker client |
+| `tests/` | 134 tests + a fake Docker client |
 
 **Capability**
 
@@ -92,7 +92,25 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 - Volume backups with checksum verification and retention
 - Per-node quota support reporting
 - Orphan detection without automatic deletion
-- 109 unit tests that run with no Docker daemon
+- 134 unit tests that run with no Docker daemon
+
+---
+
+## Discord UI and application commands
+
+- **Guided VPS creation select menus fixed.** `CreateVpsModal.on_submit()` sent
+  `NodeSelectView` before calling `build_options()`, so the embed had no node
+  dropdown. It now builds the options first; the node callback was also tested
+  through to a populated OS dropdown.
+- **All 88 prefix commands have slash equivalents.** 83 use `hybrid_command`;
+  the five existing custom slash implementations (`manage`, `myvps`, `ping`,
+  `dashboard`, `help`) remain unchanged. Prefix names and aliases are preserved.
+- `/vps` and `/ports` expose an optional `args` string for their remaining
+  arguments, since Discord rejects variadic slash parameters. Prefix parsing
+  still accepts the original command forms.
+- `tests/test_creation_views.py` covers the guided node → OS flow with fake
+  interactions; `tests/test_slash_commands.py` checks all 88 registrations and
+  serializes every payload that would be sent to Discord.
 
 ---
 
@@ -241,7 +259,7 @@ above rather than exposing it:
 ## Test results
 
 ```
-129 passed
+134 passed
 ```
 
 | File | Tests | Covers |
@@ -249,6 +267,8 @@ above rather than exposing it:
 | `test_security_policy.py` | 24 | capability drop, privileged/socket/namespace refusal, name and image validation |
 | `test_migrations.py` | 13 | idempotency, backup integrity, rollback note, base-schema drift, fresh bootstrap |
 | `test_ports.py` | 21 | reservation, conflicts, ranges, TCP/UDP, release, history, summary |
+| `test_creation_views.py` | 1 | guided modal node options and node → OS select handoff |
+| `test_slash_commands.py` | 4 | 88 prefix/slash names, payload serialization, variadic-argument options, context menu |
 | `test_panel_pump.py` | 1 | runtime progress-pump start, named task, event delivery and shutdown |
 | `test_provisioning.py` | 23 | happy path, rollback at each injected failure, plan validation, credential vault |
 | `test_rebrand_compat.py` | 18 | pre-rebrand containers and volumes still resolve, foreign containers never adopted, filter OR semantics |
