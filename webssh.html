@@ -16,7 +16,10 @@
         botVersion:  "__BOT_VERSION__",
         token:       "__TOKEN__",
         unlockKey:   "__UNLOCK_KEY__",
-        autoconnect: __AUTOCONNECT__   // null or {host, port, username, password, label}
+        // SECURITY: the server deliberately omits the password. It resolves the
+        // credential from the token on /api/ssh/connect, so a leaked page
+        // source can never reveal a root password.
+        autoconnect: __AUTOCONNECT__   // null or {host, port, username, label}
       };
     </script>
 
@@ -819,7 +822,10 @@
 
             // ── connect flow ──
             async function doConnect(host, port, user, pass) {
-                if (!host || !port || !user || !pass) return;
+                // With a bot-issued token the server owns the credentials, so an
+                // empty password is fine; without one every field is required.
+                if (!host || !port || !user) return;
+                if (!pass && !TOKEN) return;
 
                 currentHost = host;
                 currentPort = port;
@@ -831,8 +837,9 @@
 
                 try {
                     var out = await apiCall('/api/ssh/connect', {
+                        token: TOKEN,
                         host: host, port: parseInt(port, 10),
-                        username: user, password: pass,
+                        username: user, password: pass || '',
                         unlock_key: UNLOCK_KEY
                     });
                     var data = out.data || {};
