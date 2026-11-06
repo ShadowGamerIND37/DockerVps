@@ -111,7 +111,7 @@ class ProvisionResult:
     def web_console_url(self, host: str) -> Optional[str]:
         if self.workload != config.WORKLOAD_PROXMOX:
             return None
-        return f"https://{host}:{self.ssh_host_port}"
+        return proxmox.console_url(host, self.ssh_host_port)
 
 
 @dataclass

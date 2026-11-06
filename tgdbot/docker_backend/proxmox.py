@@ -2,8 +2,10 @@
 
 Proxmox is not an SSH-oriented Linux rootfs.  The community ``dockurr/proxmox``
 image runs systemd and expects privileged mode, KVM/FUSE, its native stop
-signal, two persistent volumes and its HTTPS console on port 8006.  These
+signal, two persistent volumes and its native HTTPS console on port 8006. These
 helpers keep that contract out of the ordinary unprivileged VPS pipeline.
+The pinned dockur image's healthcheck starts over HTTP; Proxmox redirects that
+request to the HTTPS console.
 
 The container receives a one-way ``PASSWORD_HASH`` rather than a plaintext
 ``PASSWORD`` environment variable.  The generated password is returned only to
@@ -21,6 +23,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 from .. import config
 from ..errors import ContainerError, SecurityPolicyError, VolumeError
@@ -35,6 +38,14 @@ WEB_PORT = config.PROXMOX_CONTAINER_PORT
 MIN_RAM_MB = config.PROXMOX_MIN_RAM_MB
 MIN_STORAGE_GB = config.PROXMOX_MIN_STORAGE_GB
 MIN_PIDS = 1024
+CONSOLE_SCHEME = "https"
+_REDIRECT_STATUSES = frozenset((301, 302, 303, 307, 308))
+_REQUEST_TIMEOUT = 8
+
+
+def console_url(host: str, port: int) -> str:
+    """Return the native console URL for the pinned dockur/proxmox runtime."""
+    return f"{CONSOLE_SCHEME}://{host}:{int(port)}"
 
 
 def is_image(image_ref: Any) -> bool:
@@ -225,30 +236,69 @@ def build_container_spec(*, container_name: str, image_ref: str, password_hash_v
     return spec
 
 
+def _get_console_response(host: str, port: int, scheme: str, path: str) -> tuple[int, Optional[str]]:
+    """Make one unauthenticated request and return its status and redirect target."""
+    if scheme == "https":
+        # The image creates a self-signed certificate on first boot. This is an
+        # availability check only; no credentials are transmitted.
+        context = ssl._create_unverified_context()
+        connection = http.client.HTTPSConnection(
+            host, int(port), timeout=_REQUEST_TIMEOUT, context=context)
+    else:
+        connection = http.client.HTTPConnection(host, int(port), timeout=_REQUEST_TIMEOUT)
+    try:
+        connection.request("GET", path, headers={"User-Agent": "tgdbot-proxmox-ready/1"})
+        response = connection.getresponse()
+        status = int(response.status)
+        location = response.getheader("Location")
+        response.read(2048)
+        return status, location
+    finally:
+        connection.close()
+
+
 def verify_web(host: str, port: int, *, attempts: Optional[int] = None,
                interval: Optional[float] = None) -> tuple[bool, str]:
-    """Wait for the unauthenticated Proxmox login page over its native HTTPS port."""
+    """Wait for the Proxmox login page, including its native HTTP→HTTPS redirect.
+
+    The pinned image healthcheck starts with ``curl -kLfSs http://localhost:8006``.
+    pveproxy answers that plain HTTP request with a redirect to HTTPS. Follow the
+    redirect just like the healthcheck, but only count a final HTTPS 200 as ready:
+    a redirect alone does not prove that the TLS endpoint is usable.
+    """
     tries = max(1, int(attempts or config.PROXMOX_READY_ATTEMPTS))
     pause = max(0.0, float(config.PROXMOX_READY_INTERVAL if interval is None else interval))
     last_error = "no response"
     for attempt in range(tries):
-        connection = None
         try:
-            # Proxmox installs a self-signed certificate on first boot.  This is
-            # an availability probe only; no credentials are transmitted.
-            context = ssl._create_unverified_context()
-            connection = http.client.HTTPSConnection(host, int(port), timeout=8, context=context)
-            connection.request("GET", "/", headers={"User-Agent": "tgdbot-proxmox-ready/1"})
-            response = connection.getresponse()
-            response.read(2048)
-            if response.status in (200, 301, 302, 303, 307, 308):
-                return True, f"Proxmox HTTPS console responded with HTTP {response.status}."
-            last_error = f"HTTP {response.status}"
+            status, location = _get_console_response(host, int(port), "http", "/")
+            if status == 200:
+                # The reviewed pveproxy contract is HTTPS. Do not silently call
+                # an HTTP-only response ready and then hand out an HTTPS URL.
+                last_error = "HTTP 200 was returned without the expected HTTPS redirect"
+            elif status not in _REDIRECT_STATUSES:
+                last_error = f"HTTP {status} from the HTTP console probe"
+            elif not location:
+                last_error = f"HTTP {status} redirect did not include a Location header"
+            else:
+                target = urlsplit(location)
+                target_scheme = target.scheme.lower()
+                target_port = target.port or (443 if target_scheme == "https" else 80)
+                same_host = (target.hostname or "").lower() == str(host).lower()
+                if (target_scheme != "https" or not same_host
+                        or target_port != int(port) or target.username or target.password):
+                    last_error = "HTTP redirect did not stay on the published HTTPS console endpoint"
+                else:
+                    path = target.path or "/"
+                    if target.query:
+                        path += "?" + target.query
+                    https_status, _ = _get_console_response(host, int(port), "https", path)
+                    if https_status == 200:
+                        return True, ("Proxmox HTTPS console responded with HTTP 200 "
+                                      "after the native HTTP redirect.")
+                    last_error = f"HTTPS console returned HTTP {https_status} after the HTTP redirect"
         except Exception as exc:  # connection resets are normal during systemd boot
             last_error = str(exc)[:300]
-        finally:
-            if connection is not None:
-                connection.close()
         if attempt + 1 < tries and pause:
             time.sleep(pause)
     return False, f"Proxmox HTTPS console did not become ready after {tries} attempts: {last_error}"
