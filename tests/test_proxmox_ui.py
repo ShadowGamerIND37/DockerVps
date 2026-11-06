@@ -31,9 +31,10 @@ def vps_row(image):
     }
 
 
-def test_proxmox_panel_uses_native_ui_and_explains_novnc():
+def test_proxmox_panel_uses_native_ui_and_explains_novnc(monkeypatch):
     import bot
 
+    monkeypatch.setattr(bot.PROXMOX_CONSOLE_SETTINGS, "public_host", "console.example.com")
     view = bot.ManageView(111, [vps_row(config.PROXMOX_IMAGE)])
     labels = {item.label for item in view.children if isinstance(item, discord.ui.Button)}
     assert "Proxmox UI" in labels
@@ -46,7 +47,8 @@ def test_proxmox_panel_uses_native_ui_and_explains_novnc():
     assert sent is not None
     embed = sent["embed"]
     assert embed.title == "Proxmox UI & VM Console"
-    assert "http://127.0.0.1:5001/c/" in embed.description
+    assert "http://console.example.com:5001/c/" in embed.description
+    assert "127.0.0.1:5001/c/" not in embed.description
     text = embed.description + "\n" + "\n".join(field.value for field in embed.fields)
     assert "Linux PAM standard authentication" in text
     assert "noVNC" in text

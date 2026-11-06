@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 import pytest_asyncio
@@ -55,6 +59,36 @@ def test_token_is_proxmox_only_and_respects_owner_shared_and_admin_policy():
         backend.issue(user_id="owner-1", vps={**row, "docker_image": "ubuntu:24.04"})
     assert backend.url_for(token).startswith("http://127.0.0.1:5001/c/")
     assert "22786" not in backend.url_for(token)
+
+
+def test_public_console_url_supports_a_domain_and_https_without_upstream_port():
+    backend = ProxmoxConsoleBackend(
+        repo=None,
+        settings=ConsoleSettings(
+            public_host="console.example.com",
+            url_format="https://{SERVER_IP}",
+            upstream_scheme="http",
+        ),
+    )
+    token = backend.issue(user_id="owner-1", vps=pve_row())
+    assert backend.url_for(token) == f"https://console.example.com/c/{token}"
+    assert "22786" not in backend.url_for(token)
+
+
+def test_console_public_defaults_follow_server_ip_in_a_clean_process():
+    root = Path(__file__).resolve().parents[1]
+    environment = os.environ.copy()
+    environment.pop("PROXMOX_CONSOLE_PUBLIC_HOST", None)
+    environment.pop("PROXMOX_CONSOLE_HOST", None)
+    environment["YOUR_SERVER_IP"] = "public.example.com"
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "from tgdbot import config; "
+         "print(config.PROXMOX_CONSOLE_HOST); "
+         "print(config.PROXMOX_CONSOLE_PUBLIC_HOST)"],
+        cwd=root, env=environment, check=True, capture_output=True, text=True,
+    )
+    assert result.stdout.splitlines() == ["0.0.0.0", "public.example.com"]
 
 
 async def _upstream_app() -> web.Application:

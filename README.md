@@ -23,7 +23,7 @@ Discord commands, panels, animations and database rows. See
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (202 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (204 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -101,9 +101,9 @@ The ones that matter most:
 | `DOCKER_DEFAULT_RAM` / `_CPU` / `_STORAGE` | `1024` / `1` / `10` | Default VPS size. |
 | `WEBSSH_ENABLED` / `_HOST` / `_PORT` | `true` / `0.0.0.0` / `5000` | Text WebSSH terminal for ordinary VPSes. |
 | `WEBSSH_ALLOW_ADHOC` | `false` | Allow connecting to hosts the bot didn't issue. |
-| `PROXMOX_CONSOLE_ENABLED` / `_HOST` / `_PORT` | `true` / `127.0.0.1` / `5001` | Native Proxmox UI/noVNC gateway, separate from WebSSH. |
-| `PROXMOX_CONSOLE_PUBLIC_HOST` | `127.0.0.1` | Host written into Proxmox console links. |
-| `PROXMOX_CONSOLE_UPSTREAM_HOST` | `127.0.0.1` | Server-side address of the published Proxmox HTTPS port. |
+| `PROXMOX_CONSOLE_ENABLED` / `_HOST` / `_PORT` | `true` / `0.0.0.0` / `5001` | Native Proxmox UI/noVNC gateway, separate from WebSSH. |
+| `PROXMOX_CONSOLE_PUBLIC_HOST` | `YOUR_SERVER_IP` | Public IP/DNS host written into Proxmox console links. |
+| `PROXMOX_CONSOLE_UPSTREAM_HOST` | `127.0.0.1` | Server-side address of the published Proxmox HTTPS port; never advertised. |
 | `SECRET_KEY` | generated | Encrypts stored root passwords. **Back this up.** |
 
 The WebSSH HTTP listener starts directly from `main()` before Discord gateway
@@ -228,7 +228,7 @@ policy; the Proxmox profile never applies to them.
   metadata.
 - A published TCP port mapped to container port **8006**. The DM and management
   panel contain a short-lived **Proxmox console gateway** link (by default
-  `http://127.0.0.1:5001/c/<token>`), not SSH/WebSSH instructions. The gateway
+  `http://<YOUR_SERVER_IP>:5001/c/<token>`), not SSH/WebSSH instructions. The gateway
   connects from the bot host to the published port over server-side HTTPS; the
   browser never supplies an upstream target. Proxmox initially uses a
   self-signed certificate on that upstream hop. Before probing, the bot
@@ -254,26 +254,43 @@ in as `root` with the `Linux PAM standard authentication` realm. The link swaps
 a short-lived token for an HttpOnly session cookie and redirects to the native
 Proxmox application. The proxy preserves its root-relative UI/API paths and
 relays binary noVNC WebSockets; it does not render a text-only substitute. On
-an HTTP loopback gateway, it adds noVNC's native `encrypt=0` query override to
-the console iframe so the browser uses `ws://` locally; the upstream hop stays
-HTTPS/WSS. Proxmox's xterm.js console already follows the page scheme.
+an HTTP gateway, it adds noVNC's native `encrypt=0` query override to the
+console iframe so the browser uses `ws://`; the upstream hop stays HTTPS/WSS.
+Proxmox's xterm.js console already follows the page scheme. Use HTTPS for
+public deployments so Proxmox's secure authentication cookies are accepted by
+remote browsers.
 
-**Loopback access:** the defaults deliberately use `127.0.0.1` for both the
-listener and the server-side Proxmox upstream. A literal `127.0.0.1` browser
-URL works only when the browser runs on the bot host. For a remote browser,
-forward the gateway port through an existing secure connection first, for
-example:
+**Remote/public access:** `PROXMOX_CONSOLE_HOST=0.0.0.0` makes the gateway
+listen for remote browsers, while `PROXMOX_CONSOLE_PUBLIC_HOST` controls only
+the host printed in links. Leave the public host blank to inherit
+`YOUR_SERVER_IP`; set it explicitly when the console uses a different DNS name.
+For example, with `YOUR_SERVER_IP=console.example.com`, the bot issues
+`http://console.example.com:5001/c/<token>`. With an HTTPS reverse proxy on the
+standard port, set `PROXMOX_CONSOLE_URL_FORMAT=https://{SERVER_IP}` so links use
+`https://console.example.com/c/<token>` instead.
 
-```sh
-ssh -N -L 5001:127.0.0.1:5001 user@<bot-host>
-```
+The bot cannot allocate a public IP or create DNS. Configure the address and
+network path on the host yourself:
 
-Then open the bot-issued `http://127.0.0.1:5001/c/<token>` link on the remote
-machine. No public IPv4 web listener is required. If a different deployment
-uses a TLS reverse proxy, configure its public URL explicitly and keep the
-upstream address server-side; do not expose the native Proxmox port merely to
-make the link work. The gateway accepts only Proxmox VE records and enforces
-owner, shared-user and administrator authorization when issuing links.
+1. Replace `YOUR_SERVER_IP=127.0.0.1` in `.env` with a real public IP or DNS
+   name. If `PROXMOX_CONSOLE_PUBLIC_HOST=127.0.0.1` already exists, remove it or
+   replace it; an explicit setting takes precedence over `YOUR_SERVER_IP`.
+2. For direct public-IP access, keep `PROXMOX_CONSOLE_HOST=0.0.0.0` and allow
+   inbound TCP `5001` in the host/cloud firewall. Behind NAT, forward TCP `5001`
+   to the bot host. A private, CGNAT, or loopback address is not remotely
+   reachable merely because it appears in a link.
+3. For a production domain, create A/AAAA records and terminate **HTTPS** at a
+   reverse proxy. Proxy HTTP requests and WebSocket upgrades to the gateway,
+   then set `PROXMOX_CONSOLE_URL_FORMAT=https://{SERVER_IP}`. Plain public HTTP
+   exposes Proxmox credentials and console traffic; HTTPS is strongly required
+   for untrusted networks and may be required by browser secure-cookie rules.
+4. Restart the bot after changing `.env`, then request a fresh console link.
+
+Keep `PROXMOX_CONSOLE_UPSTREAM_HOST=127.0.0.1` for a local node. The browser
+never chooses this upstream, and the native Proxmox port does not need to be
+exposed just to make the gateway link work. The gateway accepts only Proxmox VE
+records and enforces owner, shared-user and administrator authorization when
+issuing links.
 
 To install an operating system **inside a guest VM**:
 
@@ -356,7 +373,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**202 tests: 201 passed, 1 skipped.** They cover the security policy, port
+**204 tests: 203 passed, 1 skipped.** They cover the security policy, port
 allocation, schema migration, SSH verification retries and diagnostics, the
 provisioning transaction and rollback, the web terminal's credential handling,
 the Proxmox native HTTP/noVNC gateway, and backward compatibility across the

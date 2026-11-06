@@ -91,12 +91,14 @@ PROXMOX_READY_INTERVAL: float = env_float("PROXMOX_READY_INTERVAL", 2.0)
 # ── Native Proxmox browser console ─────────────────────────────────────────
 #: This is separate from ordinary VPS WebSSH. It proxies Proxmox's native UI,
 #: API and noVNC WebSockets, rather than opening a text terminal in the guest.
-#: Both the listener and the upstream default to loopback. A remote browser
-#: needs an SSH tunnel (or an explicitly configured secure reverse proxy).
+#: The listener is public by default so bot-issued links work from other
+#: machines. The upstream remains loopback-only. Use a TLS reverse proxy for
+#: production domains; PROXMOX_CONSOLE_PUBLIC_HOST defaults to YOUR_SERVER_IP.
 PROXMOX_CONSOLE_ENABLED: bool = env_bool("PROXMOX_CONSOLE_ENABLED", True)
-PROXMOX_CONSOLE_HOST: str = str(env("PROXMOX_CONSOLE_HOST", "127.0.0.1"))
+PROXMOX_CONSOLE_HOST: str = str(env("PROXMOX_CONSOLE_HOST", "0.0.0.0"))
 PROXMOX_CONSOLE_PORT: int = env_int("PROXMOX_CONSOLE_PORT", 5001)
-PROXMOX_CONSOLE_PUBLIC_HOST: str = str(env("PROXMOX_CONSOLE_PUBLIC_HOST", "127.0.0.1"))
+PROXMOX_CONSOLE_PUBLIC_HOST: str = str(env(
+    "PROXMOX_CONSOLE_PUBLIC_HOST", env("YOUR_SERVER_IP", "127.0.0.1")))
 PROXMOX_CONSOLE_URL_FORMAT: str = str(env("PROXMOX_CONSOLE_URL_FORMAT", "http://{SERVER_IP}:{PORT}"))
 PROXMOX_CONSOLE_UPSTREAM_HOST: str = str(env("PROXMOX_CONSOLE_UPSTREAM_HOST", "127.0.0.1"))
 PROXMOX_CONSOLE_SESSION_TTL: int = max(1, env_int("PROXMOX_CONSOLE_SESSION_TTL", 1800))
