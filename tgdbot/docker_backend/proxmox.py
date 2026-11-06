@@ -245,6 +245,11 @@ cert_public=$(openssl x509 -in "$cert" -noout -pubkey 2>/dev/null)
 key_public=$(openssl pkey -in "$key" -pubout 2>/dev/null)
 [ -n "$cert_public" ] && [ "$cert_public" = "$key_public" ]
 """
+_CFS_READY_SCRIPT = (
+    "timeout 5s perl -MPVE::Cluster -e "
+    "'PVE::Cluster::check_cfs_is_mounted(); PVE::Cluster::cfs_update(1); "
+    "PVE::Cluster::check_cfs_quorum();' 2>&1"
+)
 _CERT_UPDATE_SCRIPT = "timeout 100s pvecm updatecerts --force 2>&1"
 _CERT_RESTART_SCRIPT = "timeout 100s systemctl restart pveproxy 2>&1"
 
@@ -262,16 +267,35 @@ def _certificate_output(code: int, stdout: str, stderr: str) -> str:
     return text or (f"command exited with status {code}" if code else "")
 
 
+def _wait_for_pmxcfs(client: Any, container_name: str, *, timeout: float,
+                     interval: float) -> tuple[bool, str]:
+    """Wait until pmxcfs is mounted, answering IPC, and quorate."""
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    # Avoid a tight loop when tests disable the repair backoff.
+    pause = max(0.1, float(interval))
+    last_output = "pmxcfs readiness was not checked"
+    while True:
+        code, stdout, stderr = _run_certificate_command(
+            client, container_name, _CFS_READY_SCRIPT, user="root")
+        last_output = _certificate_output(code, stdout, stderr)
+        if code == 0:
+            return True, last_output
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False, last_output
+        time.sleep(min(pause, remaining))
+
+
 def ensure_console_certificate(client: Any, container_name: str, *, attempts: int = 2,
-                               interval: float = 2.0) -> str:
+                               interval: float = 2.0, cluster_timeout: float = 90.0) -> str:
     """Ensure pveproxy has a usable node certificate before probing its console.
 
     The pinned image starts pveproxy even when its certificate-preparation
     ``ExecStartPre`` fails. That leaves a listening socket whose workers exit
     repeatedly, so a network-only readiness probe can wait forever. Check the
-    certificate as the same user as the workers, repair it with Proxmox's own
-    supported command when necessary, then restart pveproxy. A valid existing
-    certificate is never regenerated.
+    certificate as the same user as the workers, wait for pmxcfs before
+    repairing it with Proxmox's own supported command, then restart pveproxy.
+    A valid existing certificate is never regenerated.
     """
     code, stdout, stderr = _run_certificate_command(
         client, container_name, _CERT_CHECK_SCRIPT, user="www-data")
@@ -282,6 +306,14 @@ def ensure_console_certificate(client: Any, container_name: str, *, attempts: in
     tries = max(1, int(attempts))
     pause = max(0.0, float(interval))
     for attempt in range(tries):
+        # pvecm accesses pmxcfs before its own quorum wait. Do not invoke it
+        # while the container's systemd stack is still starting pmxcfs.
+        cluster_ready, cluster_output = _wait_for_pmxcfs(
+            client, container_name, timeout=cluster_timeout, interval=pause)
+        if not cluster_ready:
+            last_output = "pmxcfs is not ready: " + cluster_output
+            break
+
         code, stdout, stderr = _run_certificate_command(
             client, container_name, _CERT_UPDATE_SCRIPT, user="root")
         update_output = _certificate_output(code, stdout, stderr)

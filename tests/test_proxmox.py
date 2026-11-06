@@ -118,10 +118,12 @@ def test_certificate_check_leaves_a_healthy_certificate_untouched(monkeypatch):
     assert "pvecm updatecerts" not in calls[0][0][2]
 
 
-def test_certificate_repair_regenerates_then_restarts_pveproxy(monkeypatch):
+def test_certificate_repair_waits_for_pmxcfs_then_restarts_pveproxy(monkeypatch):
     calls = []
     responses = iter([
         (1, "", "missing certificate"),
+        (1, "", "ipcc_send_rec[1] failed: Connection refused"),
+        (0, "", ""),  # pmxcfs is mounted, responsive, and quorate
         (0, "certificate regenerated", ""),
         (0, "", ""),
         (0, "", ""),
@@ -132,13 +134,17 @@ def test_certificate_repair_regenerates_then_restarts_pveproxy(monkeypatch):
         return next(responses)
 
     monkeypatch.setattr(proxmox.ctr, "exec_argv", exec_argv)
-    note = proxmox.ensure_console_certificate(object(), "pve-vps-1", interval=0)
+    note = proxmox.ensure_console_certificate(
+        object(), "pve-vps-1", interval=0, cluster_timeout=5)
 
     assert "repaired" in note
-    assert len(calls) == 4
-    assert "pvecm updatecerts --force" in calls[1][0][2]
-    assert "systemctl restart pveproxy" in calls[3][0][2]
-    assert [call[1]["user"] for call in calls] == ["www-data", "root", "www-data", "root"]
+    assert len(calls) == 6
+    assert "PVE::Cluster" in calls[1][0][2]
+    assert "PVE::Cluster" in calls[2][0][2]
+    assert "pvecm updatecerts --force" in calls[3][0][2]
+    assert "systemctl restart pveproxy" in calls[5][0][2]
+    assert [call[1]["user"] for call in calls] == [
+        "www-data", "root", "root", "root", "www-data", "root"]
 
 
 def test_certificate_repair_is_bounded_and_preserves_command_output(monkeypatch):
@@ -146,6 +152,8 @@ def test_certificate_repair_is_bounded_and_preserves_command_output(monkeypatch)
 
     def exec_argv(_client, _name, argv, **_kwargs):
         calls.append(argv)
+        if "PVE::Cluster" in argv[2]:
+            return 0, "", ""
         if "pvecm updatecerts" in argv[2]:
             return 1, "", "pmxcfs: no quorum"
         return 1, "", "certificate missing"
@@ -155,8 +163,27 @@ def test_certificate_repair_is_bounded_and_preserves_command_output(monkeypatch)
         proxmox.ensure_console_certificate(object(), "pve-vps-1", attempts=2, interval=0)
 
     assert "pmxcfs: no quorum" in str(caught.value)
-    assert len(calls) == 3  # initial check plus two bounded repair attempts
+    assert len(calls) == 5  # initial check plus two probes and two bounded repairs
     assert all("systemctl restart" not in argv[2] for argv in calls)
+
+
+def test_certificate_repair_reports_pmxcfs_failure_without_calling_pvecm(monkeypatch):
+    calls = []
+
+    def exec_argv(_client, _name, argv, **_kwargs):
+        calls.append(argv)
+        if "PVE::Cluster" in argv[2]:
+            return 1, "", "ipcc_send_rec[1] failed: Connection refused"
+        return 1, "", "certificate missing"
+
+    monkeypatch.setattr(proxmox.ctr, "exec_argv", exec_argv)
+    with pytest.raises(ContainerError) as caught:
+        proxmox.ensure_console_certificate(
+            object(), "pve-vps-1", attempts=2, interval=0, cluster_timeout=0)
+
+    assert "Connection refused" in str(caught.value)
+    assert len(calls) == 2  # certificate check and one bounded pmxcfs probe
+    assert all("pvecm updatecerts" not in argv[2] for argv in calls)
 
 
 def test_certificate_failure_rolls_back_provisioning(repo, proxmox_ready, engine, monkeypatch):
