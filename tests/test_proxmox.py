@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
 
 import pytest
 
@@ -145,6 +147,47 @@ def test_certificate_repair_waits_for_pmxcfs_then_restarts_pveproxy(monkeypatch)
     assert "systemctl restart pveproxy" in calls[5][0][2]
     assert [call[1]["user"] for call in calls] == [
         "www-data", "root", "root", "root", "www-data", "root"]
+
+
+def test_certificate_update_handles_long_search_domains_and_restores_resolver(tmp_path):
+    resolv = tmp_path / "resolv.conf"
+    capture = tmp_path / "resolv-during-pvecm.conf"
+    long_search = "x" * 70 + ".internal"
+    original = f"nameserver 127.0.0.11\nsearch {long_search}\noptions ndots:2\n"
+    resolv.write_text(original)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_pvecm = bin_dir / "pvecm"
+    fake_pvecm.write_text(
+        "#!/bin/sh\ncp \"$RESOLV_UNDER_TEST\" \"$RESOLV_CAPTURE\"\n")
+    fake_pvecm.chmod(0o755)
+
+    script = proxmox._CERT_UPDATE_SCRIPT.replace("/etc/resolv.conf", str(resolv))
+    env = os.environ.copy()
+    env.update({
+        "PATH": f"{bin_dir}:{env.get('PATH', '')}",
+        "RESOLV_UNDER_TEST": str(resolv),
+        "RESOLV_CAPTURE": str(capture),
+    })
+    result = subprocess.run(
+        ["sh", "-c", script], env=env, text=True, capture_output=True, timeout=15)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert resolv.read_text() == original
+    during = capture.read_text()
+    assert "search " not in during
+    assert "domain " not in during
+    assert "nameserver 127.0.0.11" in during
+
+    # A normal search domain is left alone, including during pvecm.
+    short = "nameserver 127.0.0.11\nsearch local\n"
+    resolv.write_text(short)
+    result = subprocess.run(
+        ["sh", "-c", script], env=env, text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert capture.read_text() == short
+    assert resolv.read_text() == short
 
 
 def test_certificate_repair_is_bounded_and_preserves_command_output(monkeypatch):
