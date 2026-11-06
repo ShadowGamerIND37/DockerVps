@@ -250,7 +250,51 @@ _CFS_READY_SCRIPT = (
     "'PVE::Cluster::check_cfs_is_mounted(); PVE::Cluster::cfs_update(1); "
     "PVE::Cluster::check_cfs_quorum();' 2>&1"
 )
-_CERT_UPDATE_SCRIPT = "timeout 100s pvecm updatecerts --force 2>&1"
+_CERT_UPDATE_SCRIPT = r"""resolv_conf=/etc/resolv.conf
+backup=
+sanitized=
+modified=0
+cleanup() {
+    rc=$?
+    trap - EXIT
+    if [ "$modified" -eq 1 ]; then
+        if ! cat "$backup" > "$resolv_conf"; then
+            echo "could not restore $resolv_conf after certificate update" >&2
+            if [ "$rc" -eq 0 ]; then rc=1; fi
+        fi
+    fi
+    [ -z "$backup" ] || rm -f "$backup"
+    [ -z "$sanitized" ] || rm -f "$sanitized"
+    exit "$rc"
+}
+trap cleanup EXIT
+
+# Proxmox appends the resolver search domain to the certificate CN. OpenSSL
+# rejects a CN longer than 64 characters, common with cloud-internal suffixes.
+node=$(hostname 2>/dev/null)
+node=${node%%.*}
+search=$(awk '$1 == "search" || $1 == "domain" { value=$2 } END { if (value != "") print value }' "$resolv_conf" 2>/dev/null)
+if [ -n "$search" ] && [ $(( ${#node} + ${#search} + 1 )) -gt 64 ]; then
+    backup=$(mktemp) || exit 1
+    sanitized=$(mktemp) || exit 1
+    if ! cp -p "$resolv_conf" "$backup"; then
+        echo "could not back up $resolv_conf before certificate update" >&2
+        exit 1
+    fi
+    if ! awk '$1 != "search" && $1 != "domain" { print }' "$backup" > "$sanitized"; then
+        echo "could not prepare a temporary resolver file for certificate update" >&2
+        exit 1
+    fi
+    # Set this before writing so even a partial write is restored by the trap.
+    modified=1
+    if ! cat "$sanitized" > "$resolv_conf"; then
+        echo "could not temporarily shorten the resolver search domain" >&2
+        exit 1
+    fi
+fi
+
+timeout 100s pvecm updatecerts --force 2>&1
+"""
 _CERT_RESTART_SCRIPT = "timeout 100s systemctl restart pveproxy 2>&1"
 
 

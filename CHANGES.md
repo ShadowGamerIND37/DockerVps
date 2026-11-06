@@ -9,11 +9,16 @@
   while the container's systemd stack is still starting. Persistent failures
   retain command output and use the existing transactional provisioning
   rollback instead of waiting indefinitely on a TLS-broken socket.
+- Certificate repair now handles cloud-internal DNS search suffixes that would
+  make Proxmox's certificate CN exceed OpenSSL's 64-character limit. It removes
+  the suffix only during `pvecm` and restores the original resolver file on all
+  exit paths; normal DNS configuration is preserved.
 - Proxmox recreation/reinstall uses the same guarded preparation; healthy
   rebuilds do not rotate certificates. The HTTP→HTTPS redirect and final HTTPS
   200 readiness checks remain unchanged.
-- Added healthy, delayed-pmxcfs repair, persistently failing, and rollback
-  regressions, including the `Connection refused` startup path.
+- Added healthy, delayed-pmxcfs repair, long-search-domain, persistently
+  failing, and rollback regressions, including the `Connection refused`
+  startup path and resolver restoration.
 
 ---
 
