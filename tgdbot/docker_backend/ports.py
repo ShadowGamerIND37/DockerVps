@@ -230,8 +230,22 @@ class PortAllocator:
         """
         from .networking import verify_binding
 
+        rows = self.active(container_name)
+        if not rows:
+            return []
+
+        # containers.create() returns an inspect snapshot taken before start.
+        # Docker may leave NetworkSettings.Ports empty there and populate the
+        # actual bindings only when the container starts. Refresh the object or
+        # a healthy VPS can be rolled back for a binding that really exists.
+        try:
+            container.reload()
+        except Exception as exc:
+            logger.warning("could not refresh port bindings for %s: %s", container_name, exc)
+            return [f"could not inspect Docker port bindings: {exc}"]
+
         problems: List[str] = []
-        for row in self.active(container_name):
+        for row in rows:
             if not verify_binding(container, int(row["container_port"]), str(row["protocol"]),
                                   int(row["host_port"]), str(row["host_ip"])):
                 problems.append(

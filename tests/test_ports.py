@@ -144,6 +144,27 @@ def test_mark_bound_moves_the_ledger_state(allocator):
     assert all(row["status"] == "bound" for row in allocator.active("alice-vps-1"))
 
 
+def test_verify_bindings_reloads_creation_time_metadata(allocator):
+    host_port = one(allocator, "alice-vps-1", 22, purpose=PURPOSE_SSH, protocol="tcp")
+
+    class CreationTimeContainer:
+        def __init__(self):
+            # Docker can return this from containers.create() even though the
+            # requested HostConfig.PortBindings are present.
+            self.attrs = {"NetworkSettings": {"Ports": {}}}
+            self.reload_count = 0
+
+        def reload(self):
+            self.reload_count += 1
+            self.attrs = {"NetworkSettings": {"Ports": {
+                "22/tcp": [{"HostIp": "0.0.0.0", "HostPort": str(host_port)}],
+            }}}
+
+    container = CreationTimeContainer()
+    assert allocator.verify_bindings(container, "alice-vps-1") == []
+    assert container.reload_count == 1
+
+
 def test_blacklisted_port_is_never_handed_out(allocator, monkeypatch):
     probe = allocator.pick_free_port(PURPOSE_USER)
     monkeypatch.setattr(config, "DOCKER_RESERVED_PORTS", [probe], raising=False)
