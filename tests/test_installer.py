@@ -54,9 +54,11 @@ def test_main_menu_has_the_three_requested_actions(tmp_path):
     app = make_app(tmp_path)
     result = run_installer(app, input_text="0\n")
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "TGD BOT" in result.stdout
     assert "1) Install Files Of Bot And Run" in result.stdout
     assert "2) Migration" in result.stdout
     assert "3) Auto Updater" in result.stdout
+    assert "\x1b[" not in result.stdout  # captured/non-TTY output stays script-friendly
 
 
 def test_install_prompts_preserve_blank_values_and_hide_token(tmp_path):
