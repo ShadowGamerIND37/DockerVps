@@ -23,7 +23,7 @@ Discord commands, panels, animations and database rows. See
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (196 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (197 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -225,8 +225,9 @@ policy; the Proxmox profile never applies to them.
 - A published TCP port mapped to container port **8006**. The DM contains the
   native `https://YOUR_SERVER_IP:port` console, not SSH/WebSSH instructions.
   Proxmox initially uses a self-signed certificate. Before probing, the bot
-  checks the node certificate and key as `www-data`; an unusable pair gets a
-  bounded `pvecm updatecerts --force` repair followed by a `pveproxy` restart.
+  checks the node certificate and key as `www-data`; an unusable pair waits
+  for the pmxcfs mount, IPC and quorum, then gets a bounded `pvecm updatecerts
+  --force` repair followed by a `pveproxy` restart.
   Healthy certificates are not rotated, and persistent repair output is
   returned through the normal provisioning rollback error. The readiness probe
   then starts over HTTP to match the image healthcheck, follows Proxmox's native
@@ -322,7 +323,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**196 tests: 195 passed, 1 skipped.** They cover the security policy, port
+**197 tests: 196 passed, 1 skipped.** They cover the security policy, port
 allocation, schema migration, SSH verification retries and diagnostics, the
 provisioning transaction and rollback, the web terminal's credential handling,
 and backward compatibility across the UnixNodes → TGD Bot rebrand. They run
