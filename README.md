@@ -23,7 +23,7 @@ Discord commands, panels, animations and database rows. See
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (191 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (192 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -230,6 +230,25 @@ policy; the Proxmox profile never applies to them.
 - Persistent `tgdbot_<name>` at `/var/lib/vz` and
   `tgdbot_<name>-pve-cluster` at `/var/lib/pve-cluster`.
 
+### Proxmox UI and guest boot menus
+
+The pinned image already contains an installed Proxmox VE host; there is no
+separate Proxmox host-installer boot menu to complete. Open the HTTPS link in
+the credential DM (or choose **Proxmox UI** in the management panel), then log
+in as `root` with the `Linux PAM standard authentication` realm.
+
+To install an operating system **inside a guest VM**:
+
+1. Open the Proxmox UI and upload the ISO to a storage's **ISO Images** page.
+2. Choose **Create VM**, select the ISO on the **OS** tab, and finish the VM
+   wizard.
+3. Start the VM and open its **Console**. Proxmox's noVNC console displays the
+   graphical ISO installer, BIOS and boot menu. It uses the existing Proxmox
+   web connection; no additional WebSSH port is required.
+
+WebSSH remains a text-only terminal for ordinary Linux VPSes. It cannot render
+Proxmox's graphical UI or a guest VM's display.
+
 Power actions, resize/recreate, port republication, reinstall and deletion retain
 the Proxmox runtime and volume contract. Regular one-volume backup/restore,
 clone and cross-node migration are rejected rather than producing an incomplete
@@ -299,7 +318,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**191 tests: 190 passed, 1 skipped.** They cover the security policy, port
+**192 tests: 191 passed, 1 skipped.** They cover the security policy, port
 allocation, schema migration, SSH verification retries and diagnostics, the
 provisioning transaction and rollback, the web terminal's credential handling,
 and backward compatibility across the UnixNodes → TGD Bot rebrand. They run
