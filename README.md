@@ -22,7 +22,7 @@ database row intact. See [MIGRATION.md](MIGRATION.md) for the upgrade path.
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (135 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (138 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -202,7 +202,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**135 tests, all passing.** They cover the security policy, port allocation,
+**138 tests, all passing.** They cover the security policy, port allocation,
 schema migration, the provisioning transaction and rollback, the web terminal's
 credential handling, and backward compatibility across the UnixNodes → TGD Bot
 rebrand. They run against a fake Docker client (`tests/fake_docker.py`) and need
@@ -270,5 +270,9 @@ The `VPS info` user context menu is also registered.
 - `!help` lists every command.
 - `!docker-policy`, `!docker-quota` and `!node-check` describe the real state of
   your installation.
+- If provisioning reports `Permission denied` for `/var/lib/unixnodes` or
+  another configured host directory, run `sudo bash tgdbot/scripts/install.sh`.
+  The installer reads the paths from `.env` without executing it and creates or
+  chowns those exact directories. It does not move or delete existing data.
 - `logs/` holds bot logs; `migration_reports/` holds database migration reports;
   `db_backups/` holds pre-migration database copies.
