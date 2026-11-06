@@ -65,6 +65,20 @@ same name.
 
 ---
 
+## One database path
+
+The Discord UI and the Docker services share **`DATABASE_PATH`**. The default
+is the existing v10 **`vps.db`** file; an explicit `DATABASE_PATH` in `.env` is
+honored. This prevents the UI from migrating one file while provisioning opens
+another and fails with `no such table: vps`.
+
+If an earlier v11 build created a separate `vps_data.db`, **back up both files
+and check which one contains your users and VPS rows before restarting**. Keep
+`DATABASE_PATH` pointed at that file, or set it to `./vps.db` for the original
+v10 database. Do not delete either file as part of this fix.
+
+---
+
 ## Upgrading
 
 ```bash

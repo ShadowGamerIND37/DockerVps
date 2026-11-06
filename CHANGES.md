@@ -60,7 +60,7 @@ Argon2id/PBKDF2 `hash_password`/`verify_password`, `validate_ssh_target`,
 | Web SSH server | 737-line Flask/Paramiko impl in `bot.py` | `tgdbot/web/terminal.py` |
 | Progress reporting | direct `await` from the loop | `PanelPump` bridging worker threads |
 
-**`bot.py` shrank from 12,259 to 11,640 lines** while gaining 13 commands, because
+**`bot.py` shrank from 12,259 to 11,642 lines** while gaining 13 commands, because
 the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 
 ---
@@ -83,7 +83,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 | `tgdbot/services/` | Provisioning, lifecycle, backups, expiration, nodes |
 | `tgdbot/web/terminal.py` | Web SSH terminal |
 | `tgdbot/scripts/` | Installer, migration, healthcheck, acceptance test |
-| `tests/` | 134 tests + a fake Docker client |
+| `tests/` | 135 tests + a fake Docker client |
 
 **Capability**
 
@@ -92,7 +92,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 - Volume backups with checksum verification and retention
 - Per-node quota support reporting
 - Orphan detection without automatic deletion
-- 134 unit tests that run with no Docker daemon
+- 135 unit tests that run with no Docker daemon
 
 ---
 
@@ -182,6 +182,11 @@ Writing tests surfaced real defects, not just test errors:
     its progress panel, before container creation began. It now uses
     `asyncio.create_task()`; `tests/test_panel_pump.py` reproduced the exact
     `TypeError` before the fix and exercises the same start/emit/stop path.
+12. **The Discord UI and Docker repository used different SQLite files.**
+    `bot.py` migrated `vps.db`, while `INFRA` used `DATABASE_PATH` (defaulting
+    to `vps_data.db`), so fresh provisioning failed with `no such table: vps`.
+    Both now use the same configured path; the default remains the v10
+    `vps.db`, and an explicit `DATABASE_PATH` is honored.
 
 `tests/test_static_integrity.py` now fails the build on either failure mode:
 
@@ -259,13 +264,14 @@ above rather than exposing it:
 ## Test results
 
 ```
-134 passed
+135 passed
 ```
 
 | File | Tests | Covers |
 | --- | --- | --- |
 | `test_security_policy.py` | 24 | capability drop, privileged/socket/namespace refusal, name and image validation |
 | `test_migrations.py` | 13 | idempotency, backup integrity, rollback note, base-schema drift, fresh bootstrap |
+| `test_database_bootstrap.py` | 1 | fresh configured DB is migrated before the provisioning repository reads it |
 | `test_ports.py` | 21 | reservation, conflicts, ranges, TCP/UDP, release, history, summary |
 | `test_creation_views.py` | 1 | guided modal node options and node → OS select handoff |
 | `test_slash_commands.py` | 4 | 88 prefix/slash names, payload serialization, variadic-argument options, context menu |

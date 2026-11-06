@@ -122,7 +122,7 @@ fi
 
 # ── 8. database backup ───────────────────────────────────────────────────────
 step "8/12  Database backup"
-DB_PATH="${DATABASE_PATH:-$APP_DIR/vps_data.db}"
+DB_PATH="${DATABASE_PATH:-$APP_DIR/vps.db}"
 if [[ -f "$DB_PATH" ]]; then
   mkdir -p "$APP_DIR/backups"
   STAMP="$(date +%Y%m%d_%H%M%S)"

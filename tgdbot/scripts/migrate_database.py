@@ -4,8 +4,8 @@ TGD Bot v11 database migration runner.
 
 Usage::
 
-    python tgdbot/scripts/migrate_database.py                 # migrate ./vps_data.db
-    python tgdbot/scripts/migrate_database.py --database /path/to/vps_data.db
+    python tgdbot/scripts/migrate_database.py                 # migrate ./vps.db
+    python tgdbot/scripts/migrate_database.py --database /path/to/vps.db
     python tgdbot/scripts/migrate_database.py --inspect       # report only, no changes
     python tgdbot/scripts/migrate_database.py --dry-run       # plan without writing
     python tgdbot/scripts/migrate_database.py --import-legacy-ports
@@ -85,7 +85,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--database", default=str(config.DATABASE_PATH),
-                        help="path to vps_data.db")
+                        help="path to vps.db")
     parser.add_argument("--backup-dir", default=None, help="where to write the pre-migration backup")
     parser.add_argument("--report-dir", default=str(config.MIGRATION_REPORT_DIR))
     parser.add_argument("--inspect", action="store_true",
