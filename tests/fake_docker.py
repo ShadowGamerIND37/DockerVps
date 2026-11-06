@@ -97,6 +97,16 @@ class FakeContainer:
         self.exec_calls: List[Tuple[Any, Dict[str, Any]]] = []
 
     # ── lifecycle ───────────────────────────────────────────────────────────
+    def commit(self, repository: Optional[str] = None, tag: Optional[str] = None,
+               **kwargs: Any) -> Any:
+        self.engine.fail_if("container.commit")
+        reference = f"{repository}:{tag or 'latest'}" if repository else str(self.kwargs.get("image"))
+        self.engine.snapshot_counter += 1
+        digest = f"sha256:snapshot{self.engine.snapshot_counter}"
+        self.engine.images[reference] = digest
+        self.engine.record("commit", f"{self.name}:{reference}")
+        return _FakeImage(reference, digest, self.engine)
+
     def start(self) -> None:
         self.engine.fail_if("container.start")
         if self.status == "running":
@@ -202,6 +212,16 @@ class FakeContainerCollection:
             kwargs.setdefault("image", image)
         if command is not None:
             kwargs.setdefault("command", command)
+        # Match the Engine's mount validation. In particular, Docker rejects
+        # `volume:/:rw`; accepting it here would hide the production defect.
+        for source, spec in (kwargs.get("volumes") or {}).items():
+            destination = str((spec or {}).get("bind") or "")
+            if destination == "/":
+                mode = str((spec or {}).get("mode") or "rw")
+                raise DockerAPIError(
+                    f"invalid volume specification: '{source}:{destination}:{mode}': "
+                    "invalid mount config for type \"volume\": invalid specification: "
+                    "destination can't be '/'", status_code=400)
         name = str(kwargs.get("name") or "")
         if name in self.engine.containers:
             raise Conflict(f"Conflict. The container name /{name} is already in use")
@@ -291,7 +311,10 @@ class FakeImageCollection:
 
     def get(self, reference: str) -> Any:
         if reference in self.engine.images:
-            return _FakeImage(reference, self.engine.images[reference])
+            return _FakeImage(reference, self.engine.images[reference], self.engine)
+        for ref, digest in self.engine.images.items():
+            if digest == reference:
+                return _FakeImage(ref, digest, self.engine)
         raise NotFound(f"No such image: {reference}")
 
     def pull(self, repository: str, tag: Optional[str] = None, **kwargs: Any) -> Any:
@@ -299,21 +322,60 @@ class FakeImageCollection:
         reference = f"{repository}:{tag}" if tag else repository
         self.engine.images.setdefault(reference, "sha256:fake" + str(len(self.engine.images)))
         self.engine.record("pull", reference)
-        return _FakeImage(reference, self.engine.images[reference])
+        return _FakeImage(reference, self.engine.images[reference], self.engine)
+
+    def load(self, data: bytes) -> List[Any]:
+        self.engine.fail_if("images.load")
+        try:
+            payload = json.loads(bytes(data).decode("utf-8"))
+            reference = str(payload.get("reference") or payload["id"])
+            digest = str(payload["id"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise DockerAPIError(f"invalid image archive: {exc}", status_code=400) from exc
+        self.engine.images[reference] = digest
+        self.engine.record("image.load", reference)
+        return [_FakeImage(reference, digest, self.engine)]
+
+    def remove(self, image: str, force: bool = False, **kwargs: Any) -> None:
+        self.engine.fail_if("images.remove")
+        reference = image if image in self.engine.images else next(
+            (ref for ref, digest in self.engine.images.items() if digest == image), None)
+        if reference is None:
+            raise NotFound(f"No such image: {image}")
+        self.engine.images.pop(reference, None)
+        self.engine.record("image.remove", reference)
 
     def list(self, **kwargs: Any) -> List[Any]:
-        return [_FakeImage(ref, digest) for ref, digest in self.engine.images.items()]
+        return [_FakeImage(ref, digest, self.engine) for ref, digest in self.engine.images.items()]
 
     def prune(self, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         return {"ImagesDeleted": [], "SpaceReclaimed": 0}
 
 
 class _FakeImage:
-    def __init__(self, reference: str, digest: str) -> None:
+    def __init__(self, reference: str, digest: str, engine: Optional[FakeEngine] = None) -> None:
         self.tags = [reference]
         self.id = digest
         self.short_id = digest[:19]
+        self.engine = engine
         self.attrs = {"Id": digest, "Size": 80 * 1024 * 1024, "RepoTags": [reference]}
+
+    def save(self, chunk_size: int = 2097152, named: Any = False) -> Any:
+        # A small deterministic stand-in for Docker's image tar stream. The
+        # The production code requests the exact repository/tag so it survives
+        # load() on another engine.
+        reference = (str(named) if isinstance(named, str)
+                     else self.tags[0] if named else "")
+        payload = json.dumps({"reference": reference, "id": self.id}).encode("utf-8")
+        return iter([payload])
+
+    def tag(self, repository: str, tag: Optional[str] = None, **kwargs: Any) -> bool:
+        if self.engine is None:
+            raise DockerAPIError("image is not attached to an engine")
+        reference = f"{repository}:{tag or 'latest'}"
+        self.engine.images[reference] = self.id
+        self.engine.record("image.tag", reference)
+        return True
 
 
 class FakeVolumeCollection:
@@ -405,6 +467,7 @@ class FakeEngine:
         self.images: Dict[str, str] = {"ubuntu:24.04": "sha256:ubuntu2404",
                                        "debian:12": "sha256:debian12",
                                        "alpine:3.20": "sha256:alpine320"}
+        self.snapshot_counter = 0
         self.archives: Dict[Tuple[str, str], bytes] = {}
         self.container_logs: Dict[str, bytes] = {}
         self.calls: List[Tuple[str, str]] = []
@@ -554,6 +617,18 @@ class FakeEngine:
                       {"status": "Pull complete", "id": "abc123"},
                       {"status": "Digest: sha256:fake"}]
             return iter(chunks) if stream else chunks
+
+        def import_image_from_data(self, data: bytes, repository: Optional[str] = None,
+                                   tag: Optional[str] = None, changes: Any = None) -> Any:
+            self.engine.fail_if("images.import")
+            if not data:
+                raise DockerAPIError("empty rootfs archive", status_code=400)
+            reference = f"{repository}:{tag or 'latest'}"
+            self.engine.snapshot_counter += 1
+            digest = f"sha256:import{self.engine.snapshot_counter}"
+            self.engine.images[reference] = digest
+            self.engine.record("image.import", reference)
+            return {"Id": digest}
 
     @property
     def api(self) -> Any:

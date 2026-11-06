@@ -1,15 +1,13 @@
 """
 Persistent volumes.
 
-Every VPS owns exactly one named volume which is mounted at ``/`` inside the
-container.  Mounting at the root gives the guest a *fully persistent* Linux
-filesystem: packages installed with ``apt``/``apk``, ``/etc`` configuration,
-cron jobs and every home directory all survive a container stop, restart,
-resource change or full rebuild.  Docker layers its own ``/proc``, ``/sys``,
-``/dev``, ``/etc/hosts``, ``/etc/resolv.conf`` and ``/etc/hostname`` on top of
-the volume, so the guest still behaves like a normal Linux system.
+Every VPS owns exactly one named volume mounted at ``/var/lib/tgdbot`` inside
+the container. Docker explicitly rejects a volume whose destination is ``/``.
+The volume holds persistent application data; the container's writable root
+filesystem is preserved across recreation by the lifecycle's Docker image
+snapshot, without privileged operations or ``CAP_SYS_ADMIN``.
 
-Docker volumes have **no built-in size limit**.  Real quotas are applied by
+Docker volumes have **no built-in size limit**. Real quotas are applied by
 :mod:`tgdbot.docker_backend.resources` on the host filesystem.
 """
 
@@ -25,7 +23,7 @@ from ..errors import VolumeError
 
 logger = logging.getLogger("tgdbot.docker.volumes")
 
-MOUNT_POINT = "/"
+MOUNT_POINT = "/var/lib/tgdbot"
 
 
 def volume_name(container_name: str) -> str:
@@ -49,21 +47,17 @@ def resolve_volume_name(client: Any, container_name: str,
     """
     The volume that actually holds this VPS's data.
 
-    Order of preference:
-
-    1. the name recorded in the database (authoritative),
-    2. the current ``tgdbot_`` name,
-    3. the legacy ``unixnodes_`` name, if that volume exists.
-
-    Falling through to the legacy name is what stops a rebrand from orphaning
-    every existing volume — the data is never copied or moved, it is simply
-    still found.  If nothing exists yet the canonical new name is returned so
-    the caller creates it.
+    A nonempty database name is authoritative even when it is missing: falling
+    back to a recomputed name in that case could attach an empty or unrelated
+    volume and hide the original data. Without a stored name, prefer the
+    current prefix and then the legacy prefix for pre-rebrand installations.
+    If nothing exists yet the canonical new name is returned so the caller
+    creates it.
     """
-    candidates = []
     if stored:
-        candidates.append(str(stored))
-    candidates.append(volume_name(container_name))
+        return str(stored)
+
+    candidates = [volume_name(container_name)]
     candidates.append(legacy_volume_name(container_name))
 
     seen = set()
@@ -151,7 +145,8 @@ def list_managed(client: Any) -> List[Dict[str, Any]]:
     return out
 
 
-def rename(client: Any, container_name: str, new_container_name: str) -> bool:
+def rename(client: Any, container_name: str, new_container_name: str,
+           *, stored: Optional[str] = None) -> bool:
     """
     Rename a volume by copying it to a new name.
 
@@ -161,7 +156,7 @@ def rename(client: Any, container_name: str, new_container_name: str) -> bool:
     """
     # The source may predate the rebrand, so resolve it instead of recomputing;
     # the destination is always created under the current prefix.
-    src = resolve_volume_name(client, container_name)
+    src = resolve_volume_name(client, container_name, stored)
     dst = volume_name(new_container_name)
     if get(client, dst) is not None:
         raise VolumeError(f"Target volume {dst} already exists")
@@ -242,8 +237,9 @@ def mounts_for(container_name: str, *, labels: Optional[Dict[str, str]] = None,
     """
     Bind specification for a VPS container.
 
-    The persistent volume is mounted read-write at ``/``; the caller adds the
-    read-only init script and (on first boot) the credential file.
+    The persistent volume is mounted read-write at ``/var/lib/tgdbot``; the
+    caller adds the read-only init script and (on first boot) the credential
+    file. The writable root filesystem is handled by lifecycle snapshots.
 
     ``stored`` is the volume name recorded in the database.  Passing it matters
     for any VPS created before the rebrand: without it the container would be

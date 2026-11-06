@@ -13,10 +13,10 @@ containers are deliberately left alone, and nothing is deleted for you.
 | | v10 | v11 |
 | --- | --- | --- |
 | VPS backend | LXC/LXD via `lxc` CLI over SSH | Docker Engine via the Docker SDK |
-| Root filesystem | LXD storage pool + container | Named volume `tgdbot_<name>` mounted at `/` |
+| Persistent storage | LXD storage pool + container | Named volume `tgdbot_<name>` at `/var/lib/tgdbot` plus writable-root image snapshots |
 | Ports | LXD proxy devices | Docker port publishing, tracked in `docker_ports` |
 | Disk quota | LXD `limits.disk` | XFS project quota or Btrfs qgroup — **where supported** |
-| Snapshots | LXD snapshots | Volume tar archives (not atomic snapshots) |
+| Snapshots | LXD snapshots | Volume tar + writable-root Docker-image archives (not atomic snapshots) |
 | Schema version | 10 | 11 |
 
 The Discord interface does not change. Every v10 command still exists under the

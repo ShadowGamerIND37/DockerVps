@@ -13,6 +13,7 @@ import pytest
 
 from tgdbot import config
 from tgdbot.database import models
+from tgdbot.docker_backend import volumes
 from tgdbot.errors import ProvisioningError
 from tgdbot.services import provisioning
 
@@ -51,9 +52,11 @@ def test_happy_path_creates_everything(repo, ready, engine):
     assert int(host["PidsLimit"]) == 256
     assert host["Privileged"] is False
 
-    # The named volume exists and is mounted at /.
+    # The named volume exists at a valid persistent-data destination. Docker
+    # rejects a volume mounted at '/', so no mount may use that destination.
     assert result.volume_name in engine.volumes
-    assert any(m["Destination"] == "/" for m in container.attrs["Mounts"])
+    assert any(m["Destination"] == volumes.MOUNT_POINT for m in container.attrs["Mounts"])
+    assert all(m["Destination"] != "/" for m in container.attrs["Mounts"])
 
     # The SSH port is published.
     ports = container.attrs["NetworkSettings"]["Ports"]

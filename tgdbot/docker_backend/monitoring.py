@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from .. import config
 from . import containers as ctr
+from . import volumes
 
 logger = logging.getLogger("tgdbot.docker.monitoring")
 
@@ -134,11 +135,11 @@ def container_stats(client: Any, name: str, *, include_disk: bool = True) -> Dic
 
 
 def disk_usage_text(client: Any, name: str) -> str:
-    """``df`` inside the guest — reports the persistent volume, not the image."""
+    """Report the persistent data volume, not Docker's writable image layer."""
     try:
         code, out, _err = ctr.exec_argv(
             client, name,
-            ["sh", "-c", "df -Pk / 2>/dev/null | awk 'NR==2{print $3\" \"$2\" \"$5}'"],
+            ["sh", "-c", f"df -Pk {volumes.MOUNT_POINT} 2>/dev/null | awk 'NR==2{{print $3\" \"$2\" \"$5}}'"],
             timeout=25,
         )
         parts = (out or "").split()
@@ -154,7 +155,7 @@ def disk_usage_bytes(client: Any, name: str) -> Dict[str, int]:
     try:
         _code, out, _err = ctr.exec_argv(
             client, name,
-            ["sh", "-c", "df -Pk / 2>/dev/null | awk 'NR==2{print $3\" \"$2}'"],
+            ["sh", "-c", f"df -Pk {volumes.MOUNT_POINT} 2>/dev/null | awk 'NR==2{{print $3\" \"$2}}'"],
             timeout=25,
         )
         parts = (out or "").split()

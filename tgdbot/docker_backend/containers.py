@@ -196,6 +196,110 @@ def create(client: Any, spec: Dict[str, Any], *, retries: int = 0) -> Any:
 
 
 
+# ── writable-root snapshots ────────────────────────────────────────────────
+
+SNAPSHOT_REPOSITORY = "tgdbot-rootfs"
+
+
+def snapshot_reference(container_name: str) -> str:
+    """The private image reference used for one VPS's writable layer."""
+    return f"{SNAPSHOT_REPOSITORY}/{container_name}:latest"
+
+
+def _snapshot_id(client: Any, container_name: str) -> Optional[str]:
+    try:
+        image = client.images.get(snapshot_reference(container_name))
+        return str(getattr(image, "id", "") or "") or None
+    except Exception:
+        return None
+
+
+def commit_snapshot(client: Any, name: str) -> Dict[str, Optional[str]]:
+    """Commit a stopped container's writable layer for its next recreation.
+
+    The returned ``previous_id`` lets the caller remove the superseded private
+    snapshot only *after* the replacement container exists. The base image is
+    never used as a cleanup target.
+    """
+    container = find_container(client, name)
+    reference = snapshot_reference(name)
+    if container is None:
+        # A previous attempt may have removed the old container before a
+        # replacement failed. Reuse that snapshot on retry instead of
+        # silently resetting the guest to its base image.
+        existing_id = _snapshot_id(client, name)
+        if existing_id:
+            return {"reference": reference, "id": existing_id, "previous_id": None}
+        raise ContainerError(
+            f"Cannot preserve {name}: neither its container nor a rootfs snapshot exists")
+    previous_id = _snapshot_id(client, name)
+    repository, tag = reference.rsplit(":", 1)
+    try:
+        image = container.commit(repository=repository, tag=tag, pause=True)
+        image_id = str(getattr(image, "id", "") or "") or None
+        return {"reference": reference, "id": image_id, "previous_id": previous_id}
+    except Exception as exc:
+        raise ContainerError(f"Could not preserve the writable filesystem for {name}",
+                             detail=str(exc)) from exc
+
+
+def tag_snapshot(client: Any, source_name: str, target_name: str) -> str:
+    """Give a clone its own snapshot tag without copying the writable layer."""
+    source = snapshot_reference(source_name)
+    target = snapshot_reference(target_name)
+    repository, tag = target.rsplit(":", 1)
+    try:
+        client.images.get(source).tag(repository=repository, tag=tag)
+        return target
+    except Exception as exc:
+        raise ContainerError(f"Could not prepare the clone filesystem for {target_name}",
+                             detail=str(exc)) from exc
+
+
+def remove_snapshot(client: Any, name: str, *, image_id: Optional[str] = None) -> bool:
+    """Best-effort removal of a private snapshot, never its base image.
+
+    Non-forced removal is deliberate: a clone may share the image ID under a
+    different tag, and Docker must be allowed to keep images still in use.
+    """
+    target = image_id or snapshot_reference(name)
+    try:
+        client.images.remove(image=target, force=False)
+        return True
+    except Exception as exc:
+        logger.debug("could not remove snapshot %s: %s", target, exc)
+        return False
+
+
+def save_snapshot(client: Any, reference: str) -> bytes:
+    """Export a snapshot with its repository/tag retained for migration."""
+    try:
+        image = client.images.get(reference)
+        return b"".join(image.save(named=reference))
+    except Exception as exc:
+        raise ContainerError(f"Could not export snapshot {reference}", detail=str(exc)) from exc
+
+
+def load_snapshot(client: Any, data: bytes) -> None:
+    """Import a previously exported snapshot on another Docker node."""
+    try:
+        client.images.load(data)
+    except Exception as exc:
+        raise ContainerError("Could not import the VPS filesystem snapshot",
+                             detail=str(exc)) from exc
+
+
+def import_rootfs(client: Any, reference: str, data: bytes) -> None:
+    """Import a legacy uncompressed rootfs tar as a named snapshot image."""
+    repository, tag = reference.rsplit(":", 1)
+    try:
+        client.api.import_image_from_data(data, repository=repository, tag=tag)
+        client.images.get(reference)
+    except Exception as exc:
+        raise ContainerError("Could not import the legacy VPS root filesystem",
+                             detail=str(exc)) from exc
+
+
 def start(client: Any, name: str, *, timeout: Optional[int] = None) -> Any:
     container = get_container(client, name)
     deadline = time.time() + int(timeout or config.DOCKER_START_TIMEOUT)
