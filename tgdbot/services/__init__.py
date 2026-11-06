@@ -8,6 +8,8 @@ blocked.
 
 from __future__ import annotations
 
-from . import backup_service, expiration, lifecycle, node_service, provisioning
+from . import backup_service, cloudflared, expiration, lifecycle, node_service, provisioning
 
-__all__ = ["backup_service", "expiration", "lifecycle", "node_service", "provisioning"]
+__all__ = [
+    "backup_service", "cloudflared", "expiration", "lifecycle", "node_service", "provisioning",
+]

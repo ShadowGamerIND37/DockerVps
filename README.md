@@ -23,7 +23,7 @@ Discord commands, panels, animations and database rows. See
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (204 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (212 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -292,6 +292,29 @@ exposed just to make the gateway link work. The gateway accepts only Proxmox VE
 records and enforces owner, shared-user and administrator authorization when
 issuing links.
 
+### Cloudflare quick tunnel (Proxmox only)
+
+Proxmox VPS management panels also show a **Cloudflare** button. It runs the
+Cloudflare package setup inside that VPS, installs `cloudflared`, and starts:
+
+```sh
+nohup cloudflared tunnel --url https://localhost:8006 --no-tls-verify \
+  > /root/cloudflared.log 2>&1 &
+```
+
+The button shows live stages for package updates, repository setup, the
+`cloudflared` installation, tunnel startup and URL discovery. When the log
+contains Cloudflare's **Your quick Tunnel has been created!** message, the bot
+returns the resulting `https://…trycloudflare.com` URL in the ephemeral
+response. The VPS must be running and have outbound network access.
+
+This URL is public: anyone who has it can reach the Proxmox login page, so keep
+it private and use the Proxmox credentials from your credential DM. Quick
+tunnels are temporary; after a VPS restart, reinstall or stopped `cloudflared`
+process, click **Cloudflare** again to create a fresh tunnel. The setup runs in
+the guest container, never on the Discord bot host, and is not offered for
+ordinary Linux VPS images.
+
 To install an operating system **inside a guest VM**:
 
 1. Open the Proxmox UI and upload the ISO to a storage's **ISO Images** page.
@@ -373,7 +396,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**204 tests: 203 passed, 1 skipped.** They cover the security policy, port
+**212 tests: 211 passed, 1 skipped.** They cover the security policy, port
 allocation, schema migration, SSH verification retries and diagnostics, the
 provisioning transaction and rollback, the web terminal's credential handling,
 the Proxmox native HTTP/noVNC gateway, and backward compatibility across the

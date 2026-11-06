@@ -166,6 +166,7 @@ try:
     )
     from tgdbot.services import (
         backup_service as tgd_backup_service,
+        cloudflared as tgd_cloudflared,
         expiration as tgd_expiration,
         lifecycle as tgd_lifecycle,
         node_service as tgd_node_service,
@@ -5931,6 +5932,7 @@ class ManageView(PanelView):
         self.live_tick = 0
         self.live_started = 0.0
         self._live_lock: Optional[asyncio.Lock] = None
+        self._cloudflare_running = False
         self._build()
 
     # ── helpers ──────────────────────────────────────────────────────────────
@@ -6109,6 +6111,9 @@ class ManageView(PanelView):
         self.add_button(label="Proxmox UI" if is_proxmox else "Web SSH",
                         style=discord.ButtonStyle.secondary, emoji="🌐",
                         callback=self._webssh, row=(rows or 0) + 1)
+        if is_proxmox:
+            self.add_button(label="Cloudflare", style=discord.ButtonStyle.secondary, emoji="☁️",
+                            callback=self._cloudflare, row=(rows or 0) + 1)
         self.add_button(label="Ports", style=discord.ButtonStyle.secondary, emoji="🔌",
                         callback=self._ports, row=(rows or 0) + 2)
         self.add_button(label="Share", style=discord.ButtonStyle.secondary, emoji="👥",
@@ -6231,6 +6236,85 @@ class ManageView(PanelView):
                   "• Rotate it if it ever leaked — press **Regenerate**\n"
                   "• Admins cannot read DMs sent to you", False)
         await interaction.response.send_message(embed=embed, view=PasswordView(self), ephemeral=True)
+
+    # ── Cloudflare quick tunnel (Proxmox only) ───────────────────────────────
+    async def _cloudflare(self, interaction: discord.Interaction) -> None:
+        vps = self.vps
+        if not tgd_proxmox.is_image(vps.get("docker_image") or vps.get("os_version")):
+            await interaction.response.send_message(
+                embed=error_embed("Proxmox Only", "Cloudflare setup is available only for Proxmox VPS instances."),
+                ephemeral=True)
+            return
+        if self._cloudflare_running:
+            await interaction.response.send_message(
+                embed=info_embed("Already Running", "Cloudflare setup is already running for this VPS."),
+                ephemeral=True)
+            return
+
+        self._cloudflare_running = True
+        panel: Optional[ProgressPanel] = None
+        pump: Optional[PanelPump] = None
+        try:
+            await safe_defer(interaction, ephemeral=True)
+            if vps.get("suspended"):
+                await interaction.followup.send(
+                    embed=warning_embed("VPS Suspended", "Unsuspend and start the Proxmox VPS first."),
+                    ephemeral=True)
+                return
+            current = await container_state(vps["container_name"], vps["node_id"])
+            if current != "running":
+                await interaction.followup.send(
+                    embed=warning_embed("VPS Stopped", "Start the Proxmox VPS before creating a Cloudflare tunnel."),
+                    ephemeral=True)
+                return
+
+            steps = list(tgd_cloudflared.SETUP_STEPS)
+            message = await interaction.followup.send(
+                embed=loading_embed("Cloudflare Setup", "Preparing the Proxmox VPS…"),
+                ephemeral=True, wait=True)
+            if message is None:
+                raise RuntimeError("Could not create the Cloudflare progress message")
+            # Supplying the message reference keeps every progress edit in the
+            # original ephemeral response instead of creating a public post.
+            panel = ProgressPanel(
+                interaction.channel, f"Cloudflare · {vps['container_name']}", steps,
+                subtitle="Installing cloudflared inside the Proxmox VPS",
+                color=COLORS["network"], reference=message)
+            await panel.start()
+            pump = PanelPump(panel, len(steps))
+            pump.start()
+            result = await INFRA.cloudflared(vps["container_name"], progress=pump.emit)
+            await pump.stop()
+            pump = None
+
+            url = str(result["url"])
+            audit("proxmox_cloudflare_tunnel", interaction.user.id,
+                  target=vps["container_name"], detail="quick tunnel created")
+            embed = success_embed(
+                "Cloudflare Tunnel Ready",
+                f"Your quick tunnel for `{vps['container_name']}` is ready.\n\n"
+                f"[Open Cloudflare Tunnel]({url})\n`{url}`")
+            add_field(
+                embed, "Public access",
+                "Anyone with this URL can reach the Proxmox login page. Keep it private; "
+                "Proxmox still requires your root credentials.", False)
+            add_field(
+                embed, "Running process",
+                "`cloudflared` is running inside the VPS. Log: `/root/cloudflared.log`.", False)
+            await panel.finish(final_embed=embed)
+        except Exception as exc:
+            logger.error("Cloudflare setup failed for %s: %s", vps["container_name"], exc,
+                         exc_info=True)
+            if pump is not None:
+                await pump.stop(complete=False)
+            if panel is not None:
+                await panel.finish(final_embed=error_embed(
+                    "Cloudflare Setup Failed", truncate_text(exc, 900)))
+            else:
+                await safe_send(interaction, embed=error_embed(
+                    "Cloudflare Setup Failed", truncate_text(exc, 900)), ephemeral=True)
+        finally:
+            self._cloudflare_running = False
 
     # ── web ssh ──────────────────────────────────────────────────────────────
     async def _webssh(self, interaction: discord.Interaction) -> None:
