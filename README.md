@@ -22,7 +22,7 @@ database row intact. See [MIGRATION.md](MIGRATION.md) for the upgrade path.
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (149 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (150 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -101,6 +101,9 @@ The ones that matter most:
 | `WEBSSH_ENABLED` / `_HOST` / `_PORT` | `true` / `0.0.0.0` / `5000` | Web terminal. |
 | `WEBSSH_ALLOW_ADHOC` | `false` | Allow connecting to hosts the bot didn't issue. |
 | `SECRET_KEY` | generated | Encrypts stored root passwords. **Back this up.** |
+
+The WebSSH HTTP listener starts directly from `main()` before Discord gateway
+login; it does not wait for the gateway's `on_ready` event.
 
 If `SECRET_KEY` is unset the bot generates `.secret_key` next to `bot.py` and
 warns. Losing it makes every stored root password unreadable — the VPS keeps
@@ -216,7 +219,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**149 tests, all passing.** They cover the security policy, port allocation,
+**150 tests, all passing.** They cover the security policy, port allocation,
 schema migration, the provisioning transaction and rollback, the web terminal's
 credential handling, and backward compatibility across the UnixNodes → TGD Bot
 rebrand. They run against a fake Docker client (`tests/fake_docker.py`) and need
