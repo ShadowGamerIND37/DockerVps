@@ -30,6 +30,77 @@ def request(**overrides):
     return provisioning.ProvisionRequest(**values)
 
 
+def install_console_probe(monkeypatch, responses):
+    """Install a tiny sequential HTTP/HTTPS server double for verify_web."""
+    connections = []
+
+    class Response:
+        def __init__(self, status, location=None):
+            self.status = status
+            self.location = location
+
+        def getheader(self, name):
+            return self.location if name.lower() == "location" else None
+
+        def read(self, _limit):
+            return b"Proxmox login"
+
+    class Connection:
+        def __init__(self, host, port, timeout, context=None):
+            self.host, self.port, self.timeout = host, port, timeout
+            self.scheme = "https" if context is not None else "http"
+            self.requests = []
+            self.closed = False
+            self.response = responses[len(connections)]
+            connections.append(self)
+
+        def request(self, method, path, headers=None):
+            self.requests.append((method, path, headers))
+
+        def getresponse(self):
+            if isinstance(self.response, BaseException):
+                raise self.response
+            return Response(*self.response)
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(proxmox.http.client, "HTTPConnection", Connection)
+    monkeypatch.setattr(proxmox.http.client, "HTTPSConnection", Connection)
+    return connections
+
+
+def test_verify_web_follows_the_pinned_images_http_redirect_to_https(monkeypatch):
+    connections = install_console_probe(monkeypatch, [
+        (301, "https://127.0.0.1:22786/"),
+        (200, None),
+    ])
+
+    ok, note = proxmox.verify_web("127.0.0.1", 22786, attempts=1, interval=0)
+
+    assert ok is True
+    assert "HTTPS" in note
+    assert "HTTP 200" in note
+    assert [connection.scheme for connection in connections] == ["http", "https"]
+    assert connections[0].requests[0][0:2] == ("GET", "/")
+    assert connections[1].requests[0][0:2] == ("GET", "/")
+    assert all(connection.closed for connection in connections)
+
+
+def test_verify_web_does_not_accept_a_redirect_before_tls_is_ready(monkeypatch):
+    connections = install_console_probe(monkeypatch, [
+        (301, "https://127.0.0.1:22786/"),
+        TimeoutError("TLS handshake timed out"),
+    ])
+
+    ok, note = proxmox.verify_web("127.0.0.1", 22786, attempts=1, interval=0)
+
+    assert ok is False
+    assert "TLS handshake timed out" in note
+    assert [connection.scheme for connection in connections] == ["http", "https"]
+    assert all(connection.closed for connection in connections)
+
+
 def test_ungranted_user_is_rejected_before_any_docker_mutation(repo, proxmox_ready, engine):
     with pytest.raises(ProvisioningError) as caught:
         provisioning.provision(repo, request())

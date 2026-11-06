@@ -6126,7 +6126,7 @@ class ManageView(PanelView):
                     embed=error_embed("Console Port Missing", "The Proxmox HTTPS port is not recorded; contact an admin."),
                     ephemeral=True)
                 return
-            url = f"https://{YOUR_SERVER_IP}:{int(host_port)}"
+            url = tgd_proxmox.console_url(YOUR_SERVER_IP, int(host_port))
             await interaction.response.send_message(
                 embed=create_embed(
                     "Proxmox Web Console",
@@ -6293,7 +6293,8 @@ class ManageView(PanelView):
 
         new_password = result["password"]
         host_port = int(updated.get("ssh_host_port") or vps.get("ssh_host_port") or 0)
-        console_url = f"https://{YOUR_SERVER_IP}:{host_port}" if host_port else "the published Proxmox HTTPS address"
+        console_url = (tgd_proxmox.console_url(YOUR_SERVER_IP, host_port)
+                       if host_port else "the published Proxmox HTTPS address")
         audit("vps_reinstall", interaction.user.id, target=container,
               detail=f"proxmox; node={node_id}")
         embed = success_embed("✅ Proxmox Reinstall Complete",
@@ -6682,7 +6683,7 @@ class PasswordView(PanelView):
         if is_proxmox:
             host_port = int(forward["host_port"]) if forward else int(vps.get("ssh_host_port") or 0)
             if host_port:
-                url = f"https://{YOUR_SERVER_IP}:{host_port}"
+                url = tgd_proxmox.console_url(YOUR_SERVER_IP, host_port)
                 add_field(embed, "🌐 Proxmox Console", f"[Open Proxmox VE]({url})\n`{url}`", False)
         add_field(embed, "⚠️ Security", "Delete this message once you have saved the password.", False)
         try:

@@ -1,3 +1,14 @@
+# Proxmox console readiness protocol fix
+
+- Updated readiness verification for `dockurr/proxmox:9.2.20`: its Docker
+  healthcheck starts over HTTP on port 8006 and follows redirects. The bot now
+  follows pveproxy's native HTTP→HTTPS redirect and only accepts a final HTTPS
+  200 as ready, so a redirect or an unfinished TLS endpoint is not enough.
+- Creation, password, management, and reinstall console links use the same HTTPS
+  URL helper as the verified console endpoint.
+
+---
+
 # v13 — Admin-only KVM and AppArmor creation settings
 
 - Added an admin-only security step to guided VPS creation. Admins can explicitly

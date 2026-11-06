@@ -36,6 +36,8 @@ recreated or made privileged by the migration.
 
 Before creating Proxmox, verify the selected node has `/dev/kvm` and `/dev/fuse`,
 at least 2 GB RAM/32 GB disk per instance, and a reachable published HTTPS port.
+The readiness probe starts over HTTP and follows the pinned image's native
+HTTP→HTTPS redirect before declaring the console ready.
 Set `YOUR_SERVER_IP` to the address users can reach. Proxmox uses a separate
 privileged runtime; upgrading does not change the ordinary VPS security policy.
 
