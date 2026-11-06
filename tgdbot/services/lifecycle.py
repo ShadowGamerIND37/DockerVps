@@ -6,7 +6,7 @@ The important rule for every operation here: **the persistent volume is never
 deleted unless the caller explicitly asks for it.**  Docker has to recreate a
 container to change published ports, resource limits or the security policy,
 and that recreation is data-preserving by construction — the new container
-mounts the same named volume.
+mounts the same named volume and uses a committed writable-root snapshot.
 """
 
 from __future__ import annotations
@@ -200,8 +200,12 @@ def delete(repo: Any, vps: Dict[str, Any], *, delete_volume: bool = True,
             step(1, "container removed")
         except Exception as exc:
             result["errors"].append(f"remove: {exc}")
+        # The database name is authoritative, including legacy unixnodes_ volumes.
+        # Keep the recovery image if container removal failed.
+        if not ctr.exists(client, container):
+            ctr.remove_snapshot(client, container)
         if delete_volume:
-            if volumes.remove(client, container, force=True):
+            if volumes.remove(client, container, force=True, stored=vps.get("volume_name")):
                 step(2, "volume removed")
             else:
                 result["errors"].append("volume could not be removed")
@@ -245,6 +249,7 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
              ram_mb: Optional[int] = None, cpu: Optional[float] = None,
              pids: Optional[int] = None, wipe_volume: bool = False,
              new_password: Optional[str] = None, target_node_id: Optional[int] = None,
+             rootfs_snapshot: Optional[str] = None,
              progress: Optional[Progress] = None) -> Dict[str, Any]:
     """
     Rebuild a container.  The persistent volume survives unless
@@ -254,6 +259,8 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
     node = _node(repo, vps)
     if target_node_id and int(target_node_id) != int(node["id"]):
         raise ContainerError("Use migrate() to move a VPS to another node")
+    if rootfs_snapshot and wipe_volume:
+        raise ContainerError("A rootfs snapshot cannot be used with a volume wipe")
 
     client, allocator = _client_and_allocator(repo, vps)
     image_ref = image or str(vps.get("docker_image") or vps.get("os_version")
@@ -265,6 +272,11 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
     # The volume name recorded in the database wins over a recomputed one, so a
     # VPS created before the rebrand keeps its existing data volume.
     stored_volume = volumes.resolve_volume_name(client, container, vps.get("volume_name"))
+    if (not wipe_volume and vps.get("volume_name")
+            and not volumes.exists(client, container, stored=stored_volume)):
+        raise ContainerError(
+            f"Recorded persistent volume {stored_volume} is unavailable; "
+            "refusing to recreate the VPS with a different volume")
 
     def step(index: int, message: str) -> None:
         if progress:
@@ -275,6 +287,19 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
 
     step(0, "stopping container")
     ctr.stop(client, container, timeout=120, force=True)
+
+    # Docker cannot mount a volume at '/', and recreating from the base image
+    # would discard packages and configuration in the writable layer. Commit
+    # that layer while the old container is stopped, then create from the
+    # private snapshot. This needs no privileged mode or CAP_SYS_ADMIN.
+    snapshot = None
+    if rootfs_snapshot:
+        # A restore has already loaded this image; do not overwrite it by
+        # committing the container that is about to be replaced.
+        snapshot = {"reference": str(rootfs_snapshot), "id": None, "previous_id": None}
+    elif not wipe_volume:
+        step(1, "preserving the writable root filesystem")
+        snapshot = ctr.commit_snapshot(client, container)
 
     if wipe_volume:
         step(1, "wiping the persistent volume")
@@ -293,19 +318,20 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
                 config.LABEL_MANAGED: "true", config.LABEL_CONTAINER: container,
                 config.LABEL_OWNER: str(vps.get("user_id")),
                 config.LABEL_VPS_ID: str(vps.get("id")), config.LABEL_NODE: str(node["id"])})
-        step(1, "persistent volume kept")
+        step(2, "persistent volume kept")
 
-    step(2, "removing the old container")
+    step(3, "removing the old container")
     ctr.remove(client, container, volumes=False, force=True)
 
-    step(3, "creating the new container")
+    step(4, "creating the new container")
     password = new_password
     if wipe_volume and password:
         ssh.write_credential(container, password)
     binds = volumes.mounts_for(container, extra_binds=ssh.bind_mounts(container),
                                stored=stored_volume)
+    create_image = str(snapshot.get("reference")) if snapshot else image_ref
     spec = ctr.build_container_spec(
-        container_name=container, image=image_ref, ram_mb=ram, cpu=cores, pids=limit_pids,
+        container_name=container, image=create_image, ram_mb=ram, cpu=cores, pids=limit_pids,
         publish_ip=allocator.publish_ip, published_ports=allocator.publish_spec(container),
         volumes=binds,
         labels={config.LABEL_VPS_ID: str(vps.get("id")),
@@ -314,9 +340,16 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
         command=ssh.container_command(), hostname=container[:63])
     container_obj = ctr.create(client, spec)
 
-    step(4, "starting container")
+    step(5, "starting container")
     ctr.start(client, container)
     ctr.wait_running(client, container, timeout=90)
+
+    # Remove only superseded private snapshots, after the replacement is
+    # running. Never remove the recorded base image or a snapshot still in use.
+    if snapshot and snapshot.get("previous_id") and snapshot.get("previous_id") != snapshot.get("id"):
+        ctr.remove_snapshot(client, container, image_id=str(snapshot["previous_id"]))
+    if wipe_volume:
+        ctr.remove_snapshot(client, container)
 
     problems = allocator.verify_bindings(container_obj, container)
     if problems:
@@ -360,7 +393,7 @@ def resize(repo: Any, vps: Dict[str, Any], *, ram_mb: Optional[int] = None,
     quota_report = {"enforced": bool(vps.get("quota_enforced")),
                     "method": str(vps.get("quota_method") or ""), "detail": ""}
     if storage_gb:
-        mountpoint = volumes.mountpoint(client, container) or ""
+        mountpoint = volumes.mountpoint(client, container, stored=vps.get("volume_name")) or ""
         support = resources.detect_quota_support(mountpoint, node_is_local=bool(node.get("is_local")))
         project_id = resources.suggested_project_id(
             volumes.resolve_volume_name(client, container, vps.get("volume_name")))
@@ -369,6 +402,7 @@ def resize(repo: Any, vps: Dict[str, Any], *, ram_mb: Optional[int] = None,
         if support.supported:
             enforced, detail = resources.apply_quota(mountpoint, new_storage, support.method,
                                                      project_id)
+        detail = f"{detail} {resources.DATA_VOLUME_QUOTA_NOTE}".strip()
         repo.set_quota(container, node_id=int(node["id"]), method=support.method,
                        project_id=project_id if support.method == "xfs-project-quota" else None,
                        size_gb=new_storage, enforced=enforced, detail=detail)
@@ -488,21 +522,27 @@ def clone(repo: Any, vps: Dict[str, Any], new_name: str, *, owner_id: Any,
             except Exception:
                 pass
 
-    step(0, "copying the persistent volume")
-    volumes.rename(client, container, new_name)
+    step(0, "preserving the writable root filesystem")
+    snapshot = ctr.commit_snapshot(client, container)
 
-    step(1, "reserving an SSH port")
+    step(1, "copying the persistent volume")
+    volumes.rename(client, container, new_name, stored=vps.get("volume_name"))
+    clone_snapshot = (ctr.tag_snapshot(client, container, new_name)
+                      if snapshot else None)
+
+    step(2, "reserving an SSH port")
     allocator.reserve(new_name, config.SSH_CONTAINER_PORT, purpose=PURPOSE_SSH,
                       protocol="tcp", user_id=owner_id)
     ssh_port = allocator.ssh_port(new_name) or 0
 
-    step(2, "creating the clone container")
+    step(3, "creating the clone container")
     password = generate_password()
     ssh.write_credential(new_name, password)
     binds = volumes.mounts_for(new_name, extra_binds=ssh.bind_mounts(new_name))
     image_ref = str(vps.get("docker_image") or vps.get("os_version") or config.DOCKER_DEFAULT_IMAGE)
+    create_image = clone_snapshot or image_ref
     spec = ctr.build_container_spec(
-        container_name=new_name, image=image_ref, ram_mb=_ram_mb(vps), cpu=_cpu(vps),
+        container_name=new_name, image=create_image, ram_mb=_ram_mb(vps), cpu=_cpu(vps),
         pids=int(vps.get("pid_limit") or config.DOCKER_DEFAULT_PID_LIMIT),
         publish_ip=allocator.publish_ip, published_ports=allocator.publish_spec(new_name),
         volumes=binds,
@@ -512,7 +552,7 @@ def clone(repo: Any, vps: Dict[str, Any], new_name: str, *, owner_id: Any,
     container_obj = ctr.create(client, spec)
     ctr.start(client, new_name)
 
-    step(3, "registering the clone")
+    step(4, "registering the clone")
     new_id = repo.next_vps_id()
     repo.insert_vps({
         "id": new_id, "user_id": str(owner_id), "node_id": int(node["id"]),
@@ -533,9 +573,10 @@ def migrate(repo: Any, vps: Dict[str, Any], target_node_id: int,
     """
     Move a VPS to another Docker node.
 
-    Docker cannot copy a container between engines, so the volume is streamed
-    through the backup machinery: archive on the source node, copy the archive
-    across, restore on the target, then delete the source container.
+    Docker cannot copy a container between engines, so the volume and writable
+    rootfs are streamed through the backup machinery: archive on the source
+    node, copy both archives across, restore on the target, then delete the
+    source container.
     """
     from ..docker_backend import backups as backups_mod
 
@@ -557,22 +598,34 @@ def migrate(repo: Any, vps: Dict[str, Any], target_node_id: int,
             except Exception:
                 pass
 
-    step(0, "backing up the source volume")
+    step(0, "backing up the source volume and writable root filesystem")
     backup = backups_mod.create_backup(source_client, container,
                                        node_is_local=bool(source_node.get("is_local")),
-                                       progress=None)
+                                       volume_name=vps.get("volume_name"), progress=None)
 
-    step(1, "transferring the archive")
-    archive_bytes = _read_archive(source_client, backup, node_is_local=bool(source_node.get("is_local")))
+    if not backup.get("relative_rootfs_archive"):
+        raise ContainerError("The source backup did not include its required rootfs archive")
+
+    step(1, "transferring the archives")
+    archive_bytes = _read_archive(source_client, backup,
+                                  node_is_local=bool(source_node.get("is_local")))
     _write_archive(target_client, archive_bytes, backup["relative_archive"])
+    if backup.get("relative_rootfs_archive"):
+        rootfs_bytes = _read_archive(source_client, backup,
+                                     node_is_local=bool(source_node.get("is_local")),
+                                     artifact="rootfs")
+        _write_archive(target_client, rootfs_bytes, backup["relative_rootfs_archive"])
 
     step(2, "creating the volume on the target node")
     ssh.ensure_runtime_assets()
     volumes.create(target_client, container, labels={
         config.LABEL_MANAGED: "true", config.LABEL_CONTAINER: container,
         config.LABEL_NODE: str(target_node["id"])})
-    backups_mod.restore_backup(target_client, container, archive=backup["relative_archive"],
-                               node_is_local=bool(target_node.get("is_local")), wipe=False)
+    restored = backups_mod.restore_backup(
+        target_client, container, archive=backup["relative_archive"],
+        node_is_local=bool(target_node.get("is_local")), wipe=False,
+        volume_name=volumes.volume_name(container),
+        rootfs_required=True)
 
     step(3, "creating the container on the target node")
     allocator = PortAllocator(repo, int(target_node["id"]),
@@ -587,12 +640,17 @@ def migrate(repo: Any, vps: Dict[str, Any], target_node_id: int,
     ssh.write_credential(container, password)
     binds = volumes.mounts_for(container, extra_binds=ssh.bind_mounts(container))
     image_ref = str(vps.get("docker_image") or vps.get("os_version") or config.DOCKER_DEFAULT_IMAGE)
-    images_mod.ensure_image(target_client, image_ref)
+    create_image = str(restored.get("rootfs_snapshot") or image_ref)
+    if not restored.get("rootfs_snapshot"):
+        images_mod.ensure_image(target_client, image_ref)
     spec = ctr.build_container_spec(
-        container_name=container, image=image_ref, ram_mb=_ram_mb(vps), cpu=_cpu(vps),
+        container_name=container, image=create_image, ram_mb=_ram_mb(vps), cpu=_cpu(vps),
         pids=int(vps.get("pid_limit") or config.DOCKER_DEFAULT_PID_LIMIT),
         publish_ip=allocator.publish_ip, published_ports=allocator.publish_spec(container),
-        volumes=binds, labels={config.LABEL_NODE: str(target_node["id"])},
+        volumes=binds, labels={config.LABEL_NODE: str(target_node["id"]),
+                               config.LABEL_IMAGE: image_ref,
+                               config.LABEL_OWNER: str(vps.get("user_id")),
+                               config.LABEL_VPS_ID: str(vps.get("id"))},
         command=ssh.container_command(), hostname=container[:63])
     ctr.create(target_client, spec)
     ctr.start(target_client, container)
@@ -600,6 +658,8 @@ def migrate(repo: Any, vps: Dict[str, Any], target_node_id: int,
     step(4, "removing the source container")
     ctr.stop(source_client, container, timeout=90, force=True)
     ctr.remove(source_client, container, volumes=False, force=True)
+    if not ctr.exists(source_client, container):
+        ctr.remove_snapshot(source_client, container)
     # Remove whatever the source really had, including a pre-rebrand volume.
     volumes.remove(source_client, container, force=True,
                    stored=vps.get("volume_name"))
@@ -612,16 +672,19 @@ def migrate(repo: Any, vps: Dict[str, Any], target_node_id: int,
     return {"container": container, "node_id": int(target_node["id"]), "password": password}
 
 
-def _read_archive(client: Any, backup: Dict[str, Any], *, node_is_local: bool) -> bytes:
+def _read_archive(client: Any, backup: Dict[str, Any], *, node_is_local: bool,
+                  artifact: str = "volume") -> bytes:
     from pathlib import Path
 
+    rootfs = artifact == "rootfs"
+    path_key = "rootfs_archive" if rootfs else "archive"
+    relative_key = "relative_rootfs_archive" if rootfs else "relative_archive"
     if node_is_local:
-        return Path(str(backup["archive"])).read_bytes()
-    code, out, _err = None, "", ""
+        return Path(str(backup[path_key])).read_bytes()
     import base64
 
     code, out, _err = _helper_output(
-        client, f"base64 /backup/{backup['relative_archive']}")
+        client, f"base64 /backup/{backup[relative_key]}")
     if code != 0:
         raise ContainerError("Could not read the backup archive from the source node")
     return base64.b64decode("".join(out.split()))
@@ -690,6 +753,8 @@ def remove_orphan(repo: Any, node_id: int, container_name: str) -> bool:
         return False
     client = nodes_mod.require_client(node)
     ctr.remove(client, container_name, volumes=True, force=True)
+    if not ctr.exists(client, container_name):
+        ctr.remove_snapshot(client, container_name)
     try:
         volumes.remove(client, container_name, force=True)
     except Exception:

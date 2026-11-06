@@ -48,10 +48,10 @@ Argon2id/PBKDF2 `hash_password`/`verify_password`, `validate_ssh_target`,
 | --- | --- | --- |
 | Container engine | `lxc` CLI, shelled out over SSH | Docker Engine API via the `docker` SDK |
 | Create workflow | ad-hoc sequence | 22-step transaction with per-step rollback |
-| Root filesystem | LXD storage pool | Named volume `tgdbot_<name>` mounted at `/` |
+| Persistent storage | LXD storage pool | Named volume `tgdbot_<name>` at `/var/lib/tgdbot` plus writable-root image snapshots |
 | Ports | LXD proxy devices | Docker port publishing, tracked in `docker_ports` |
 | Disk quota | `limits.disk` | XFS project quota or Btrfs qgroup, reported honestly |
-| Snapshots / backup | LXD snapshots | Volume tar archive + JSON side-car + sha256 |
+| Snapshots / backup | LXD snapshots | Volume tar + rootfs Docker-image archive + JSON side-car + sha256 |
 | Resize | `lxc config set` (live) | Container recreate, volume preserved |
 | Reinstall | delete + recreate | Recreate with `wipe_volume=True` |
 | Clone | `lxc copy` | Volume duplicated via helper container |
@@ -83,16 +83,16 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 | `tgdbot/services/` | Provisioning, lifecycle, backups, expiration, nodes |
 | `tgdbot/web/terminal.py` | Web SSH terminal |
 | `tgdbot/scripts/` | Installer, migration, healthcheck, acceptance test |
-| `tests/` | 138 tests + a fake Docker client |
+| `tests/` | 148 tests + a fake Docker client |
 
 **Capability**
 
 - Custom images can be approved at runtime (`!image-add`)
 - Port reservation history is queryable, including released ports
-- Volume backups with checksum verification and retention
-- Per-node quota support reporting
+- Volume and writable-root backups with checksum verification and retention
+- Per-node quota support reporting, with data-volume scope stated explicitly
 - Orphan detection without automatic deletion
-- 138 unit tests that run with no Docker daemon
+- 148 unit tests that run with no Docker daemon
 
 ---
 
@@ -270,7 +270,7 @@ above rather than exposing it:
 ## Test results
 
 ```
-138 passed
+148 passed
 ```
 
 | File | Tests | Covers |
@@ -288,6 +288,7 @@ above rather than exposing it:
 | `test_rebrand_compat.py` | 18 | pre-rebrand containers and volumes still resolve, foreign containers never adopted, filter OR semantics |
 | `test_web_terminal.py` | 18 | no password in page source, PIN lockout, ad-hoc refusal, headers, rate limits |
 | `test_static_integrity.py` | 11 | undefined globals, unresolvable module attributes, deleted-helper revival, progress-callback safety, no privileged mode |
+| `test_storage_persistence.py` | 10 | root-mount rejection, snapshot recreation/retry, backup/legacy restore, stored-volume safety, clone and migration |
 
 Static analysis: **0 undefined names** across `bot.py`, `tgdbot/` and
 `tests/`, and every `tgdbot` attribute access in `bot.py` resolves.

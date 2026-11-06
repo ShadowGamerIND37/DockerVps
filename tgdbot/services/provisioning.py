@@ -443,6 +443,7 @@ class Provisioner:
         if support.supported:
             enforced, detail = resources.apply_quota(mountpoint, storage_gb, support.method,
                                                      project_id)
+        detail = f"{detail} {resources.DATA_VOLUME_QUOTA_NOTE}".strip()
         self.repo.set_quota(container, node_id=int(self.node["id"]), method=support.method,
                             project_id=project_id if support.method == "xfs-project-quota" else None,
                             size_gb=storage_gb, enforced=enforced, detail=detail)

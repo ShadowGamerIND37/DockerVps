@@ -34,6 +34,13 @@ from ..errors import QuotaSupportReport, QuotaUnsupported
 
 logger = logging.getLogger("tgdbot.docker.resources")
 
+#: The host quota is attached to the named data volume. Docker's writable
+#: image layer is a separate storage location and is driver-dependent.
+DATA_VOLUME_QUOTA_NOTE = (
+    "Host quota covers the persistent data volume only; Docker's writable root "
+    "filesystem is stored separately."
+)
+
 XFS_MAGIC = 0x58465342
 BTRFS_MAGIC = 0x9123683E
 

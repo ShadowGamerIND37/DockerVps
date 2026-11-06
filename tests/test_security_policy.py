@@ -14,6 +14,7 @@ import pytest
 from tgdbot import config
 from tgdbot.docker_backend import containers as ctr
 from tgdbot.docker_backend import security
+from tgdbot.docker_backend import volumes
 
 
 def _spec(**overrides):
@@ -21,7 +22,7 @@ def _spec(**overrides):
         container_name="test-vps-1", image="ubuntu:24.04", ram_mb=1024, cpu=1.0,
         pids=512, publish_ip="0.0.0.0",
         published_ports=[(22001, 22, "tcp"), (25001, 8080, "tcp")],
-        volumes={"tgdbot_test-vps-1": {"bind": "/", "mode": "rw"}},
+        volumes={"tgdbot_test-vps-1": {"bind": volumes.MOUNT_POINT, "mode": "rw"}},
     )
     kwargs.update(overrides)
     return ctr.build_container_spec(**kwargs)
@@ -87,9 +88,11 @@ def test_ports_are_published_through_the_sdk_shape():
     assert ports["8080/tcp"] == [("0.0.0.0", 25001)]
 
 
-def test_named_volume_is_mounted_at_root():
+def test_named_volume_uses_persistent_data_mount():
     spec = _spec()
-    assert spec["volumes"]["tgdbot_test-vps-1"]["bind"] == "/"
+    destination = spec["volumes"]["tgdbot_test-vps-1"]["bind"]
+    assert destination == volumes.MOUNT_POINT
+    assert destination != "/"
 
 
 def test_platform_labels_ownership():

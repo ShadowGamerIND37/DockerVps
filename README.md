@@ -22,7 +22,7 @@ database row intact. See [MIGRATION.md](MIGRATION.md) for the upgrade path.
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (138 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (148 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -114,10 +114,18 @@ A container running a real init process and `sshd`, with:
 
 - **Root SSH login** on a dedicated host port, password authentication
 - **Bash or ash**, `apt` / `apk`, cron, SFTP
-- **A persistent named volume** (`tgdbot_<name>`) mounted as the container root,
-  so data survives restart, resize, reinstall and port changes
+- **A persistent named volume** (`tgdbot_<name>`) mounted at `/var/lib/tgdbot`,
+  plus a private writable-root image snapshot used during recreation, so data
+  survives restart, resize and port changes (reinstall intentionally wipes it)
 - **RAM, CPU and PID limits** enforced by the kernel
-- **Storage quota** where the host filesystem supports it
+- **Storage quota** where the host filesystem supports it; the host quota covers
+  `/var/lib/tgdbot`, while Docker's writable root layer is separate
+
+Docker rejects a named volume whose destination is `/`. The data volume therefore
+lives at `/var/lib/tgdbot`; before a container is recreated, the lifecycle commits
+its writable root layer to a private `tgdbot-rootfs/<name>:latest` image and
+creates the replacement from that image. This preserves packages, `/etc`, home
+directories and SSH host keys without privileged mode or `CAP_SYS_ADMIN`.
 
 The image is initialised reproducibly on first boot: OpenSSH is installed once,
 host keys are generated, `sshd_config` is written deterministically, cron starts,
@@ -179,9 +187,14 @@ Containers are tagged so the bot only ever touches the ones it manages.
 
 ## Backups
 
-`!vps-backup <name>` archives the persistent volume through a short-lived helper
-container, records the config, image, ports and environment alongside it, and
-stores a SHA-256 checksum.
+`!vps-backup <name>` archives the persistent data volume and exports the
+writable root filesystem as a companion Docker-image archive through short-lived
+helper operations. It records the config, image, ports and environment alongside
+them, and stores SHA-256 checksums. New restores require and reload both parts;
+a missing required companion is rejected before the VPS is stopped or its data
+is touched. Older backups whose volume archive is a legacy whole-rootfs export
+are imported as a rootfs image instead of being redirected into the data mount;
+that compatibility path leaves the existing data volume untouched.
 
 ```
 !vps-backups [name]          # list
@@ -190,8 +203,9 @@ stores a SHA-256 checksum.
 !vps-backup-prune            # apply retention (newest 4, or 30 days)
 ```
 
-A backup is a **tar archive**, not a filesystem snapshot. It is crash-consistent,
-not atomic, and the container is paused while it is taken.
+A backup is a set of **tar archives**, not an atomic filesystem snapshot. The
+workload is paused (or stopped in stop mode) while both parts are captured; the
+result is crash-consistent, not a block-level snapshot.
 
 ---
 
@@ -202,7 +216,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**138 tests, all passing.** They cover the security policy, port allocation,
+**148 tests, all passing.** They cover the security policy, port allocation,
 schema migration, the provisioning transaction and rollback, the web terminal's
 credential handling, and backward compatibility across the UnixNodes → TGD Bot
 rebrand. They run against a fake Docker client (`tests/fake_docker.py`) and need
@@ -229,7 +243,7 @@ These are real, and the bot reports them rather than hiding them:
    qgroups are supported. On ext4 or overlayfs the limit is recorded and shown to
    users but **cannot be enforced**. `!docker-quota` says which case you are in.
 2. **Backups are archives, not snapshots.** They are not atomic and not
-   copy-on-write. A large volume takes a long time to archive.
+   copy-on-write. A large volume or writable rootfs takes a long time to archive.
 3. **`no-new-privileges` is disabled** so `sudo` and root SSH login work. This is
    a deliberate trade-off, not an oversight.
 4. **Containers share the host kernel.** Unlike LXD or a real VM, a kernel

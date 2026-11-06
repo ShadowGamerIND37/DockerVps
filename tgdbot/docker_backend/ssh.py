@@ -9,9 +9,9 @@ otherwise produces VPS that cannot reboot their services.  Instead every
 container runs a tiny POSIX supervisor as PID 1 (backed by ``docker init`` for
 zombie reaping) which:
 
-1. installs OpenSSH *once* — the result lands on the persistent volume, so a
-   restart never re-downloads packages;
-2. generates and keeps host keys (they live in ``/etc/ssh`` on the volume);
+1. installs OpenSSH *once* — the result lands in the writable root layer,
+   which lifecycle operations preserve in a private Docker image snapshot;
+2. generates and keeps host keys in ``/etc/ssh`` in that preserved root layer;
 3. writes a deterministic ``sshd`` configuration;
 4. applies the root credential from a read-only-until-used file and then
    truncates it, so no plaintext password ever survives on disk;
@@ -36,6 +36,7 @@ from typing import Any, Dict, Optional, Tuple
 from .. import config
 from ..errors import SSHSetupError
 from . import containers
+from . import volumes
 
 logger = logging.getLogger("tgdbot.docker.ssh")
 
@@ -417,13 +418,13 @@ def ensure_ssh_running(client: Any, container_name: str) -> Tuple[bool, str]:
 
 def guest_report(client: Any, container_name: str) -> Dict[str, Any]:
     """Small diagnostic snapshot used by ``!vps-info``."""
-    script = r"""
+    script = rf"""
 echo "OS=$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME")"
 echo "KERNEL=$(uname -r)"
 echo "SSHD=$(command -v sshd >/dev/null 2>&1 && echo yes || echo no)"
 echo "CRON=$(command -v cron >/dev/null 2>&1 || command -v crond >/dev/null 2>&1 || echo none)"
 echo "UPTIME=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)"
-df -Pk / 2>/dev/null | awk 'NR==2{print "DISK_USED="$3"\nDISK_TOTAL="$2"\nDISK_PCT="$5}'
+df -Pk {volumes.MOUNT_POINT} 2>/dev/null | awk 'NR==2{{print "DISK_USED="$3"\nDISK_TOTAL="$2"\nDISK_PCT="$5}}'
 """
     values: Dict[str, str] = {}
     try:

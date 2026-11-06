@@ -45,7 +45,8 @@ def create(repo: Any, vps: Dict[str, Any], *, note: str = "", mode: str = "pause
                               str(node.get("publish_ip") or config.DOCKER_PUBLISH_IP))
     metadata = backups_mod.create_backup(
         client, container, node_is_local=bool(node.get("is_local")),
-        allocator=allocator, note=note, mode=mode, progress=progress)
+        allocator=allocator, note=note, mode=mode,
+        volume_name=vps.get("volume_name"), progress=progress)
     metadata["node_id"] = int(node["id"])
     metadata["scheduled"] = scheduled
     repo.add_backup(metadata)
@@ -62,9 +63,23 @@ def restore(repo: Any, vps: Dict[str, Any], backup_name: str, *,
     client, node = _client(repo, vps)
     archive = str(record.get("relative_archive")
                   or (record.get("archive") or "").split("/")[-1])
+    configuration = record.get("configuration") or {}
     result = backups_mod.restore_backup(
         client, vps["container_name"], archive=archive,
-        node_is_local=bool(node.get("is_local")), progress=progress)
+        node_is_local=bool(node.get("is_local")),
+        volume_name=vps.get("volume_name"),
+        rootfs_required=bool(configuration.get("rootfs_included")),
+        progress=progress)
+    if result.get("rootfs_snapshot"):
+        # Loading an image does not alter an existing container's rootfs. Use
+        # the normal lifecycle path to replace it without committing over the
+        # just-restored image or changing the recorded base image.
+        recreated = lifecycle.recreate(
+            repo, vps, rootfs_snapshot=str(result["rootfs_snapshot"]))
+        result["container_recreated"] = True
+        result["running"] = recreated.get("running")
+    else:
+        raise BackupError("Restore did not produce a rootfs image; the VPS was not recreated")
     result["backup"] = backup_name
     return result
 
@@ -98,7 +113,10 @@ def verify(repo: Any, backup_name: str) -> Dict[str, Any]:
     if not node:
         raise BackupError("The node that holds this backup no longer exists")
     client = nodes_mod.require_client(node)
-    ok, note = backups_mod.verify_archive(client, str(config.DOCKER_BACKUP_DIR), backup_name)
+    configuration = record.get("configuration") or {}
+    ok, note = backups_mod.verify_archive(
+        client, str(config.DOCKER_BACKUP_DIR), backup_name,
+        rootfs_required=bool(configuration.get("rootfs_included")))
     repo.add_backup({**record, "verified": ok, "verify_note": note})
     return {"name": backup_name, "verified": ok, "note": note}
 
