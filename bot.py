@@ -864,7 +864,9 @@ def audit(action: str, actor_id: Optional[Union[int, str]] = None, *,
 #   • `webssh_tokens.unlock_keys` is persisted (previously a restart logged
 #     every browser out of a PIN-protected terminal).
 
-DB_FILE = BASE_DIR / "vps.db"
+# One database path for both the legacy UI and the Docker repository.
+# Do not hard-code a second filename here: provisioning uses INFRA.repo.
+DB_FILE = Path(tgd_config.DATABASE_PATH).expanduser()
 DB_BACKUP_DIR = BASE_DIR / "db_backups"
 DB_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 

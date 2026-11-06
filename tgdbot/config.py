@@ -208,7 +208,9 @@ HOST_MOTD: str = str(env("HOST_MOTD", ""))
 
 # ── Database ────────────────────────────────────────────────────────────────
 
-DATABASE_PATH: Path = env_path("DATABASE_PATH", str(BASE_DIR / "vps_data.db"))
+# The v10 bot used vps.db. Keep that as the canonical default so the
+# Discord UI and Docker services never initialize separate databases.
+DATABASE_PATH: Path = env_path("DATABASE_PATH", str(BASE_DIR / "vps.db"))
 DATABASE_BACKUP_DIR: Path = env_path("DATABASE_BACKUP_DIR", str(BASE_DIR / "backups"))
 MIGRATION_REPORT_DIR: Path = env_path("MIGRATION_REPORT_DIR", str(BASE_DIR / "migration_reports"))
 
