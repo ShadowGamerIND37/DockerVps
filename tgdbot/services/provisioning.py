@@ -61,7 +61,7 @@ _PROXMOX_STEP_NAMES = {
     6: "Create both Proxmox persistent volumes",
     10: "Publish the Proxmox HTTPS port",
     12: "Start the Proxmox systemd environment",
-    13: "Confirm native Proxmox service management",
+    13: "Prepare the Proxmox console certificate",
     15: "Verify the Proxmox HTTPS console",
 }
 
@@ -424,7 +424,14 @@ class Provisioner:
         self._step(12, "running")
         if self.workload == config.WORKLOAD_PROXMOX:
             self._step(12, "done", "native Proxmox systemd entrypoint preserved")
-            self._step(13, "done", "Proxmox services are managed by systemd; SSH bootstrap skipped")
+            # The image can leave pveproxy listening even when its TLS
+            # certificate setup failed. Repair that before the strict web probe.
+            self._step(13, "running")
+            try:
+                certificate_note = proxmox.ensure_console_certificate(self.client, container)
+            except Exception as exc:
+                raise self._fail(13, exc) from exc
+            self._step(13, "done", certificate_note)
         else:
             report: Dict[str, Any] = {}
             for attempt in range(6):

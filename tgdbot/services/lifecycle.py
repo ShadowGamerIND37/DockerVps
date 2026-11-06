@@ -395,6 +395,11 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
     step(5, "starting container")
     ctr.start(client, container)
     ctr.wait_running(client, container, timeout=90)
+    if requested_is_proxmox:
+        # Reinstalls start with fresh cluster state, while rebuilds may carry
+        # a damaged certificate forward. The helper is a no-op for a healthy
+        # certificate and never rotates one unnecessarily.
+        proxmox.ensure_console_certificate(client, container)
 
     # Remove only superseded private snapshots, after the replacement is
     # running. Never remove the recorded base image or a snapshot still in use.

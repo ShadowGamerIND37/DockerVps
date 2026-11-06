@@ -1,3 +1,19 @@
+# Proxmox console certificate repair
+
+- Added a guarded certificate/key check before Proxmox console readiness. It
+  runs as `www-data`, matching the pveproxy workers, and leaves a healthy
+  certificate untouched.
+- Missing or unusable certificates now receive bounded `pvecm updatecerts
+  --force` repair attempts, a post-repair validation, and a `pveproxy` restart.
+  Persistent failures retain command output and use the existing transactional
+  provisioning rollback instead of waiting indefinitely on a TLS-broken socket.
+- Proxmox recreation/reinstall uses the same guarded preparation; healthy
+  rebuilds do not rotate certificates. The HTTP→HTTPS redirect and final HTTPS
+  200 readiness checks remain unchanged.
+- Added healthy, repaired, persistently failing, and rollback regressions.
+
+---
+
 # Proxmox native UI guidance
 
 - Clarified that the pinned Proxmox image is already installed and that guest
