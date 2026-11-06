@@ -1,3 +1,15 @@
+# Proxmox native UI guidance
+
+- Clarified that the pinned Proxmox image is already installed and that guest
+  ISO installers, BIOS screens and boot menus are available through each VM's
+  native noVNC **Console** in the Proxmox web UI.
+- The management panel now labels the Proxmox action **Proxmox UI** instead of
+  **Web SSH**, and labels its text command action **Host Shell**. Login and
+  guest-console instructions are included in the panel response and credential
+  DM. WebSSH remains text-only for ordinary Linux VPSes.
+
+---
+
 # Proxmox console readiness protocol fix
 
 - Updated readiness verification for `dockurr/proxmox:9.2.20`: its Docker

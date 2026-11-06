@@ -5987,11 +5987,14 @@ class ManageView(PanelView):
                         row=rows if rows else None)
         self.add_button(label="Stats", style=discord.ButtonStyle.primary, emoji="📊",
                         callback=self._stats, row=(rows or 0) + 1)
-        self.add_button(label="Console", style=discord.ButtonStyle.secondary, emoji="🖥️",
+        is_proxmox = tgd_proxmox.is_image(self.vps.get("docker_image") or self.vps.get("os_version"))
+        self.add_button(label="Host Shell" if is_proxmox else "Console",
+                        style=discord.ButtonStyle.secondary, emoji="🖥️",
                         callback=self._console, row=(rows or 0) + 1)
         self.add_button(label="Password", style=discord.ButtonStyle.secondary, emoji="🔑",
                         callback=self._password, row=(rows or 0) + 1)
-        self.add_button(label="Web SSH", style=discord.ButtonStyle.secondary, emoji="🌐",
+        self.add_button(label="Proxmox UI" if is_proxmox else "Web SSH",
+                        style=discord.ButtonStyle.secondary, emoji="🌐",
                         callback=self._webssh, row=(rows or 0) + 1)
         self.add_button(label="Ports", style=discord.ButtonStyle.secondary, emoji="🔌",
                         callback=self._ports, row=(rows or 0) + 2)
@@ -6127,13 +6130,20 @@ class ManageView(PanelView):
                     ephemeral=True)
                 return
             url = tgd_proxmox.console_url(YOUR_SERVER_IP, int(host_port))
-            await interaction.response.send_message(
-                embed=create_embed(
-                    "Proxmox Web Console",
-                    f"Use the native Proxmox console for `{vps['container_name']}`.\n\n"
-                    f"[Open Proxmox VE]({url})\n`{url}`\n\n"
-                    "WebSSH is not used for Proxmox; log in with root and your Proxmox password.",
-                    COLORS["network"]), ephemeral=True)
+            embed = create_embed(
+                "Proxmox UI & VM Console",
+                f"Use the native Proxmox UI for `{vps['container_name']}`.\n\n"
+                f"[Open Proxmox VE]({url})\n`{url}`\n\n"
+                "The Proxmox host is already installed; WebSSH is text-only and is not used here.",
+                COLORS["network"])
+            add_field(embed, "Login",
+                      "User `root` • Realm `Linux PAM standard authentication` • "
+                      "Password: the Proxmox password from your DM.", False)
+            add_field(embed, "Guest OS installer / boot menu",
+                      "Upload an ISO, create and start a VM, then open its **Console**. "
+                      "Proxmox's noVNC console displays the ISO installer and BIOS/boot menu.",
+                      False)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         if not WEBSSH_ENABLED:
             await interaction.response.send_message(
@@ -7484,6 +7494,7 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
     add_field(success, "⚡ Quick Start",
               (f"`{PREFIX}manage` — Open control panel\n"
                f"Open the Proxmox HTTPS URL in your DM\n"
+               f"Guest OS: Create VM → Start → Console (noVNC)\n"
                f"`{PREFIX}vps renew` — Extend lifetime" if is_proxmox else
                f"`{PREFIX}manage` — Open control panel\n"
                f"`{PREFIX}ports add 1 <port>` — Publish a port\n"
@@ -7509,7 +7520,9 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
                                     extra_lines=["**Realm** `Linux PAM standard authentication`"]), False)
         add_field(dm, "🌐 Proxmox Web Console",
                   f"[**→ Open Proxmox VE**]({proxmox_url})\n`{proxmox_url}`\n"
-                  "The first connection uses Proxmox's self-signed HTTPS certificate.", False)
+                  "The first connection uses Proxmox's self-signed HTTPS certificate.\n"
+                  "The host is already installed. For a guest OS, upload an ISO, create and start "
+                  "a VM, then open its **Console** (noVNC) for the installer and boot menu.", False)
     else:
         add_field(dm, "🔐 SSH Credentials",
                   credentials_block(ssh_command, password, container=container, node_name=node["name"]), False)
