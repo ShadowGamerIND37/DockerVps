@@ -83,7 +83,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 | `tgdbot/services/` | Provisioning, lifecycle, backups, expiration, nodes |
 | `tgdbot/web/terminal.py` | Web SSH terminal |
 | `tgdbot/scripts/` | Installer, migration, healthcheck, acceptance test |
-| `tests/` | 156 tests + a fake Docker client |
+| `tests/` | 157 tests + a fake Docker client |
 
 **Capability**
 
@@ -92,7 +92,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 - Volume and writable-root backups with checksum verification and retention
 - Per-node quota support reporting, with data-volume scope stated explicitly
 - Orphan detection without automatic deletion
-- 156 unit tests that run with no Docker daemon
+- 157 unit tests that run with no Docker daemon
 
 ---
 
@@ -212,6 +212,14 @@ Writing tests surfaced real defects, not just test errors:
     a failed release retains the volume and quota record for a safe retry.
 18. **Public VPS requests lost their visibility flag.** `is_public` from the
     provision request is now persisted in the registered VPS row.
+19. **OpenSSH could not enter its mandatory pre-auth chroot.** The container's
+    capability drop included `SYS_CHROOT`, so sshd accepted TCP and sent its
+    banner, then terminated every Paramiko login with `EOFError` or
+    `ConnectionResetError`. `CAP_KEEP` now retains `SYS_CHROOT` even when an
+    extra drop requests it; dangerous administration capabilities remain
+    dropped. A real OpenSSH run reproduced `chroot("/run/sshd"): Operation not
+    permitted`, and the corrected drop list passed real Paramiko logins both
+    with and without PAM.
 
 `tests/test_static_integrity.py` now fails the build on either failure mode:
 
@@ -289,12 +297,12 @@ above rather than exposing it:
 ## Test results
 
 ```
-155 passed, 1 skipped
+156 passed, 1 skipped
 ```
 
 | File | Tests | Covers |
 | --- | --- | --- |
-| `test_security_policy.py` | 24 | capability drop, privileged/socket/namespace refusal, name and image validation |
+| `test_security_policy.py` | 25 | capability drop including OpenSSH chroot retention, privileged/socket/namespace refusal, name and image validation |
 | `test_migrations.py` | 13 | idempotency, backup integrity, rollback note, base-schema drift, fresh bootstrap |
 | `test_database_bootstrap.py` | 1 | fresh configured DB is migrated before the provisioning repository reads it |
 | `test_env_value.py` | 2 | safe .env path parsing, legacy paths, shell precedence, no shell execution |

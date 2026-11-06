@@ -27,15 +27,16 @@ from ..errors import SecurityPolicyError
 # ── capability policy ───────────────────────────────────────────────────────
 #
 # Docker's default set already excludes SYS_ADMIN/SYS_MODULE/etc.  We drop the
-# remainder that a normal Linux workload does not need.  CHOWN/DAC_*/SETUID/
-# SETGID/AUDIT_WRITE are deliberately *kept*: dpkg, apk and PAM-backed sshd
-# require them.
-#: Capabilities a customer VPS must never hold.
+# remainder that a normal Linux workload does not need. CHOWN/DAC_*/SETUID/
+# SETGID/AUDIT_WRITE are deliberately *kept* for dpkg, apk and PAM. OpenSSH's
+# mandatory pre-auth privilege separation also requires SYS_CHROOT.
+#: Candidate capabilities to remove from a customer VPS.
 #:
 #: Docker already withholds most of these (``SYS_ADMIN``, ``SYS_MODULE``,
 #: ``SYS_RAWIO`` …), so listing them is belt-and-braces: it keeps the policy
 #: correct even if a future runtime default changes or something else re-adds
-#: them.  ``CAP_KEEP`` below is subtracted before the list is used.
+#: them. ``CAP_KEEP`` below is subtracted before the list is used and always
+#: wins for capabilities required by the guest's core services.
 DEFAULT_CAP_DROP: Tuple[str, ...] = (
     "MKNOD",
     "AUDIT_READ",
@@ -67,9 +68,15 @@ DEFAULT_CAP_DROP: Tuple[str, ...] = (
     "SYS_CHROOT",
 )
 
-#: Capabilities that must never be dropped (the guest would not boot).
+#: Capabilities required by package management, PAM and OpenSSH.
+#:
+#: In particular, dropping SYS_CHROOT makes sshd accept TCP and send its banner,
+#: then kill every pre-auth session when ``chroot("/run/sshd")`` is denied. To
+#: a Paramiko client that looks like an EOFError/ConnectionResetError, not an
+#: authentication failure.
 CAP_KEEP: frozenset = frozenset({
     "CHOWN", "DAC_OVERRIDE", "SETUID", "SETGID", "KILL", "AUDIT_WRITE", "FSETID", "SETFCAP",
+    "SYS_CHROOT",
 })
 
 # Paths that must never appear as a bind mount inside a customer container.

@@ -22,7 +22,7 @@ database row intact. See [MIGRATION.md](MIGRATION.md) for the upgrade path.
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (156 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (157 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -143,7 +143,7 @@ Every customer container is created with:
 | Control | Setting |
 | --- | --- |
 | Privileged mode | off by default (`DOCKER_PRIVILEGED=false`); enabling it logs a loud warning |
-| Capabilities | dropped (`DEFAULT_CAP_DROP`), keeping only the 8 a real OS needs |
+| Capabilities | dropped (`DEFAULT_CAP_DROP`), keeping the 9 required by package management, PAM and OpenSSH |
 | Docker socket | **never** mounted into a customer container |
 | Host devices / namespaces | **never** shared (no `pid=host`, `net=host`, `/dev` mounts) |
 | Memory swap | disabled — `memswap_limit == mem_limit` |
@@ -219,7 +219,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**156 tests: 155 passed, 1 skipped.** They cover the security policy, port
+**157 tests: 156 passed, 1 skipped.** They cover the security policy, port
 allocation, schema migration, SSH verification retries and diagnostics, the
 provisioning transaction and rollback, the web terminal's credential handling,
 and backward compatibility across the UnixNodes → TGD Bot rebrand. They run
