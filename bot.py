@@ -4788,10 +4788,6 @@ class TgdBot(commands.Bot):
             )
         except discord.HTTPException:
             pass
-        if WEBSSH_ENABLED and not self._flask_started:
-            # Load webssh tokens from database on startup
-            _load_webssh_tokens_from_db()
-            self.start_webssh_server()
 
     async def on_disconnect(self) -> None:
         self.ready_event.clear()
@@ -4810,20 +4806,29 @@ class TgdBot(commands.Bot):
 
     # ── Flask web terminal ───────────────────────────────────────────────────
     def start_webssh_server(self) -> None:
+        if not WEBSSH_ENABLED or self._flask_started:
+            return
+        try:
+            _load_webssh_tokens_from_db()
+            flask_app = create_webssh_app()
+
+            def _serve() -> None:
+                try:
+                    logger.info("Web terminal listening on http://%s:%s", WEBSSH_HOST, WEBSSH_PORT)
+                    # Werkzeug's dev server with threads is fine behind a reverse proxy;
+                    # production deployments should front it with nginx + TLS.
+                    flask_app.run(host=WEBSSH_HOST, port=WEBSSH_PORT, debug=False,
+                                  threaded=True, use_reloader=False)
+                except Exception as exc:  # pragma: no cover
+                    logger.error("Web terminal crashed: %s", exc)
+
+            thread = threading.Thread(target=_serve, daemon=True, name="webssh-server")
+            thread.start()
+        except Exception as exc:
+            self._flask_started = False
+            logger.error("Web terminal could not start: %s", exc, exc_info=True)
+            return
         self._flask_started = True
-        flask_app = create_webssh_app()
-
-        def _serve() -> None:
-            try:
-                logger.info("Web terminal listening on http://%s:%s", WEBSSH_HOST, WEBSSH_PORT)
-                # Werkzeug's dev server with threads is fine behind a reverse proxy;
-                # production deployments should front it with nginx + TLS.
-                flask_app.run(host=WEBSSH_HOST, port=WEBSSH_PORT, debug=False,
-                              threaded=True, use_reloader=False)
-            except Exception as exc:  # pragma: no cover
-                logger.error("Web terminal crashed: %s", exc)
-
-        threading.Thread(target=_serve, daemon=True, name="webssh-server").start()
 
     # ── background workers ───────────────────────────────────────────────────
     async def _autosave_loop(self) -> None:
@@ -11617,6 +11622,10 @@ def main() -> int:
     if WEBSSH_ENABLED and WEBSSH_HOST == "0.0.0.0":
         logger.warning("The web terminal is bound to 0.0.0.0:%s — put TLS and a reverse proxy "
                        "in front of it for internet-facing deployments.", WEBSSH_PORT)
+
+    # WebSSH is an independent HTTP service. Start it before Discord gateway
+    # login so a delayed or failed on_ready event cannot leave the port closed.
+    bot.start_webssh_server()
 
     try:
         bot.run(DISCORD_TOKEN, log_handler=None, reconnect=True)

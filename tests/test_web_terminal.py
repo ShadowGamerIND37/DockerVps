@@ -261,6 +261,24 @@ def test_connect_rate_limit_per_ip(backend, client):
     assert 429 in statuses, "no rate limit was applied to repeated connection attempts"
 
 
+def test_bot_main_starts_webssh_before_discord(monkeypatch):
+    """The HTTP service must not depend on Discord's on_ready event."""
+    import bot as bot_module
+
+    events = []
+    monkeypatch.setattr(bot_module, "startup_checks", lambda: [])
+    monkeypatch.setattr(bot_module, "print_banner", lambda: None)
+    monkeypatch.setattr(bot_module, "final_save", lambda: None)
+    monkeypatch.setattr(bot_module, "WEBSSH_ENABLED", True)
+    monkeypatch.setattr(bot_module.bot, "start_webssh_server",
+                        lambda: events.append("webssh"))
+    monkeypatch.setattr(bot_module.bot, "run",
+                        lambda *args, **kwargs: events.append("discord"))
+
+    assert bot_module.main() == 0
+    assert events == ["webssh", "discord"]
+
+
 def test_issue_requires_a_published_ssh_port(repo, fake_node, backend, vault):
     repo.insert_vps({
         "id": 2, "user_id": "222", "node_id": int(fake_node["id"]),

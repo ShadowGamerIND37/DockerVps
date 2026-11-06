@@ -83,7 +83,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 | `tgdbot/services/` | Provisioning, lifecycle, backups, expiration, nodes |
 | `tgdbot/web/terminal.py` | Web SSH terminal |
 | `tgdbot/scripts/` | Installer, migration, healthcheck, acceptance test |
-| `tests/` | 149 tests + a fake Docker client |
+| `tests/` | 150 tests + a fake Docker client |
 
 **Capability**
 
@@ -92,7 +92,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 - Volume and writable-root backups with checksum verification and retention
 - Per-node quota support reporting, with data-volume scope stated explicitly
 - Orphan detection without automatic deletion
-- 149 unit tests that run with no Docker daemon
+- 150 unit tests that run with no Docker daemon
 
 ---
 
@@ -198,6 +198,10 @@ Writing tests surfaced real defects, not just test errors:
     and populate it at startup. Verification now reloads that object before
     comparing bindings, preventing a healthy VPS from being rolled back with a
     false "host port is not bound" error.
+15. **WebSSH waited for Discord's `on_ready` event.** Gateway delays or login
+    failures could leave the HTTP listener completely unstarted. `main()` now
+    starts WebSSH before `bot.run()`, restores saved terminal tokens at the same
+    time, and only marks the listener started after its thread launches.
 
 `tests/test_static_integrity.py` now fails the build on either failure mode:
 
@@ -275,7 +279,7 @@ above rather than exposing it:
 ## Test results
 
 ```
-149 passed
+150 passed
 ```
 
 | File | Tests | Covers |
@@ -291,7 +295,7 @@ above rather than exposing it:
 | `test_panel_pump.py` | 1 | runtime progress-pump start, named task, event delivery and shutdown |
 | `test_provisioning.py` | 23 | happy path, rollback at each injected failure, plan validation, credential vault |
 | `test_rebrand_compat.py` | 18 | pre-rebrand containers and volumes still resolve, foreign containers never adopted, filter OR semantics |
-| `test_web_terminal.py` | 18 | no password in page source, PIN lockout, ad-hoc refusal, headers, rate limits |
+| `test_web_terminal.py` | 19 | no password in page source, PIN lockout, ad-hoc refusal, headers, startup order |
 | `test_static_integrity.py` | 11 | undefined globals, unresolvable module attributes, deleted-helper revival, progress-callback safety, no privileged mode |
 | `test_storage_persistence.py` | 10 | root-mount rejection, snapshot recreation/retry, backup/legacy restore, stored-volume safety, clone and migration |
 
