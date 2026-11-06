@@ -16,6 +16,7 @@ Discord commands, panels, animations and database rows. See
 | Path | What it is |
 | --- | --- |
 | `bot.py` | The Discord application. UI, commands, permissions, panels, background loops. |
+| `installer.sh` | Three-option interactive installer, migration runner and auto-updater menu. |
 | `tgdbot/` | The infrastructure package. All Docker, database and service logic. |
 | `tgdbot/docker_backend/` | Docker Engine adapters: containers, images, volumes, ports, security, SSH, backups, monitoring, nodes. |
 | `tgdbot/database/` | Schema, migrations and the repository. |
@@ -23,7 +24,7 @@ Discord commands, panels, animations and database rows. See
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (212 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (218 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -69,6 +70,30 @@ A helper installer is available if you prefer one command:
 ```bash
 bash tgdbot/scripts/install.sh          # never runs destructive Docker cleanup
 ```
+
+Or use the menu-driven installer from the repository root:
+
+```bash
+sudo bash installer.sh
+```
+
+It provides three options:
+
+1. **Install Files Of Bot And Run** — asks for the Discord bot token, admin ID
+   (`MAIN_ADMIN_ID`) and owner ID(s) (`OWNER_IDS`). Press **Enter** at any prompt
+   to leave that `.env` value unchanged. The token is entered without echoing;
+   existing `.env` settings are preserved, then the regular installer starts or
+   restarts the `tgdbot` service.
+2. **Migration** — runs the existing backed-up, idempotent database migration.
+3. **Auto Updater** — check/apply an update now, enable an hourly systemd timer,
+   or disable it. Updates use `git pull --ff-only`; a dirty worktree is skipped,
+   never reset or overwritten. A successful update installs requirements, runs
+   the migration and restarts the service. Automatic updates require a Git
+   checkout with a configured upstream and root/systemd access.
+
+The non-interactive equivalents are `bash installer.sh --install`,
+`--migrate`, `--auto-update`, `--enable-auto-update` and
+`--disable-auto-update`.
 
 ---
 
@@ -396,7 +421,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**212 tests: 211 passed, 1 skipped.** They cover the security policy, port
+**218 tests: 217 passed, 1 skipped.** They cover the security policy, port
 allocation, schema migration, SSH verification retries and diagnostics, the
 provisioning transaction and rollback, the web terminal's credential handling,
 the Proxmox native HTTP/noVNC gateway, and backward compatibility across the
