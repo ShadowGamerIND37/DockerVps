@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from .. import config
 from ..docker_backend import containers as ctr
 from ..docker_backend import images as images_mod
-from ..docker_backend import monitoring, nodes as nodes_mod, resources, ssh, volumes
+from ..docker_backend import monitoring, nodes as nodes_mod, proxmox, resources, ssh, volumes
 from ..docker_backend.ports import PURPOSE_USER, PortAllocator
 from ..errors import ContainerError, ContainerNotFound, TgdBotError
 from ..database import models
@@ -176,6 +176,7 @@ def delete(repo: Any, vps: Dict[str, Any], *, delete_volume: bool = True,
     happened so nothing is silently left behind.
     """
     container = vps["container_name"]
+    is_proxmox = proxmox.is_image(vps.get("docker_image") or vps.get("os_version"))
     result = {"container": container, "steps": [], "errors": []}
 
     def step(index: int, message: str) -> None:
@@ -209,6 +210,12 @@ def delete(repo: Any, vps: Dict[str, Any], *, delete_volume: bool = True,
                 step(2, "volume removed")
             else:
                 result["errors"].append("volume could not be removed")
+            if is_proxmox:
+                try:
+                    if proxmox.remove_cluster_volume(client, container):
+                        step(2, "Proxmox cluster volume removed")
+                except Exception as exc:
+                    result["errors"].append(f"Proxmox cluster volume: {exc}")
             quota = repo.get_quota(container)
             if quota:
                 mountpoint = ""
@@ -225,7 +232,8 @@ def delete(repo: Any, vps: Dict[str, Any], *, delete_volume: bool = True,
     except Exception as exc:
         result["errors"].append(f"database: {exc}")
 
-    ssh.clear_credential(container)
+    if not is_proxmox:
+        ssh.clear_credential(container)
 
     if delete_backups:
         for backup in repo.list_backups(container):
@@ -265,13 +273,36 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
     client, allocator = _client_and_allocator(repo, vps)
     image_ref = image or str(vps.get("docker_image") or vps.get("os_version")
                              or config.DOCKER_DEFAULT_IMAGE)
+    if image is not None:
+        # Reinstall is another provisioning boundary, not a way to smuggle an
+        # unapproved image past /image-add or the Proxmox grant check.
+        image_ref = images_mod.resolve(str(image), repo.list_approved_images())["value"]
+    proxmox.assert_supported_reference(image_ref)
+    current_is_proxmox = proxmox.is_image(vps.get("docker_image") or vps.get("os_version"))
+    requested_is_proxmox = proxmox.is_image(image_ref)
+    if current_is_proxmox != requested_is_proxmox:
+        raise ContainerError(
+            "Changing between a regular VPS and Proxmox requires a new VPS; "
+            "their privilege and storage contracts are incompatible.",
+            user_message="Create a new VPS to change between a regular OS and Proxmox.",
+        )
     ram = int(ram_mb or _ram_mb(vps))
     cores = float(cpu if cpu is not None else _cpu(vps))
     limit_pids = int(pids or vps.get("pid_limit") or config.DOCKER_DEFAULT_PID_LIMIT)
+    if requested_is_proxmox:
+        proxmox.validate_resources(ram, _storage_gb(vps))
+        limit_pids = proxmox.effective_pids(limit_pids)
     was_running = ctr.simple_state(client, container) == "running"
     # The volume name recorded in the database wins over a recomputed one, so a
     # VPS created before the rebrand keeps its existing data volume.
     stored_volume = volumes.resolve_volume_name(client, container, vps.get("volume_name"))
+    volume_labels = {
+        config.LABEL_MANAGED: "true", config.LABEL_CONTAINER: container,
+        config.LABEL_OWNER: str(vps.get("user_id")),
+        config.LABEL_VPS_ID: str(vps.get("id")), config.LABEL_NODE: str(node["id"]),
+    }
+    if requested_is_proxmox and not wipe_volume:
+        proxmox.assert_volumes_exist(client, container, data_volume=stored_volume)
     if (not wipe_volume and vps.get("volume_name")
             and not volumes.exists(client, container, stored=stored_volume)):
         raise ContainerError(
@@ -304,40 +335,48 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
     if wipe_volume:
         step(1, "wiping the persistent volume")
         volumes.remove(client, container, force=True, stored=stored_volume)
-        volumes.create(client, container, labels={
-            config.LABEL_MANAGED: "true", config.LABEL_CONTAINER: container,
-            config.LABEL_OWNER: str(vps.get("user_id")),
-            config.LABEL_VPS_ID: str(vps.get("id")), config.LABEL_NODE: str(node["id"])})
+        if requested_is_proxmox:
+            proxmox.remove_cluster_volume(client, container)
+        volumes.create(client, container, labels=volume_labels)
+        if requested_is_proxmox:
+            client.volumes.create(name=proxmox.cluster_volume_name(container),
+                                  driver="local", labels=dict(volume_labels))
         repo.delete_quota(container)
         # The volume was just recreated under the current prefix, so the name
         # resolved before the wipe is now stale.
         stored_volume = volumes.resolve_volume_name(client, container, None)
     else:
         if not volumes.exists(client, container, stored=stored_volume):
-            volumes.create(client, container, labels={
-                config.LABEL_MANAGED: "true", config.LABEL_CONTAINER: container,
-                config.LABEL_OWNER: str(vps.get("user_id")),
-                config.LABEL_VPS_ID: str(vps.get("id")), config.LABEL_NODE: str(node["id"])})
-        step(2, "persistent volume kept")
+            volumes.create(client, container, labels=volume_labels)
+        step(2, "Proxmox data and cluster volumes kept" if requested_is_proxmox
+             else "persistent volume kept")
 
     step(3, "removing the old container")
     ctr.remove(client, container, volumes=False, force=True)
 
     step(4, "creating the new container")
     password = new_password
-    if wipe_volume and password:
-        ssh.write_credential(container, password)
-    binds = volumes.mounts_for(container, extra_binds=ssh.bind_mounts(container),
-                               stored=stored_volume)
     create_image = str(snapshot.get("reference")) if snapshot else image_ref
-    spec = ctr.build_container_spec(
-        container_name=container, image=create_image, ram_mb=ram, cpu=cores, pids=limit_pids,
-        publish_ip=allocator.publish_ip, published_ports=allocator.publish_spec(container),
-        volumes=binds,
-        labels={config.LABEL_VPS_ID: str(vps.get("id")),
-                config.LABEL_OWNER: str(vps.get("user_id")),
-                config.LABEL_NODE: str(node["id"]), config.LABEL_IMAGE: image_ref},
-        command=ssh.container_command(), hostname=container[:63])
+    container_labels = {config.LABEL_VPS_ID: str(vps.get("id")),
+                        config.LABEL_OWNER: str(vps.get("user_id")),
+                        config.LABEL_NODE: str(node["id"]), config.LABEL_IMAGE: image_ref}
+    if requested_is_proxmox:
+        spec = proxmox.build_container_spec(
+            container_name=container, image_ref=create_image,
+            password_hash_value=(proxmox.password_hash(password)
+                                 if wipe_volume and password else None),
+            ram_mb=ram, cpu=cores, pids=limit_pids, publish_ip=allocator.publish_ip,
+            published_ports=allocator.publish_spec(container), labels=container_labels)
+    else:
+        if wipe_volume and password:
+            ssh.write_credential(container, password)
+        binds = volumes.mounts_for(container, extra_binds=ssh.bind_mounts(container),
+                                   stored=stored_volume)
+        spec = ctr.build_container_spec(
+            container_name=container, image=create_image, ram_mb=ram, cpu=cores, pids=limit_pids,
+            publish_ip=allocator.publish_ip, published_ports=allocator.publish_spec(container),
+            volumes=binds, labels=container_labels,
+            command=ssh.container_command(), hostname=container[:63])
     container_obj = ctr.create(client, spec)
 
     step(5, "starting container")
@@ -386,6 +425,8 @@ def resize(repo: Any, vps: Dict[str, Any], *, ram_mb: Optional[int] = None,
     container = vps["container_name"]
     node = _node(repo, vps)
     client, _allocator = _client_and_allocator(repo, vps)
+    if proxmox.is_image(vps.get("docker_image") or vps.get("os_version")) and storage_gb is not None:
+        proxmox.validate_resources(int(ram_mb or _ram_mb(vps)), int(storage_gb))
 
     result = recreate(repo, vps, ram_mb=ram_mb, cpu=cpu, pids=pids, progress=progress)
 
@@ -402,7 +443,10 @@ def resize(repo: Any, vps: Dict[str, Any], *, ram_mb: Optional[int] = None,
         if support.supported:
             enforced, detail = resources.apply_quota(mountpoint, new_storage, support.method,
                                                      project_id)
-        detail = f"{detail} {resources.DATA_VOLUME_QUOTA_NOTE}".strip()
+        quota_note = ("Quota covers /var/lib/vz; the cluster-configuration volume is separate."
+                      if proxmox.is_image(vps.get("docker_image") or vps.get("os_version"))
+                      else resources.DATA_VOLUME_QUOTA_NOTE)
+        detail = f"{detail} {quota_note}".strip()
         repo.set_quota(container, node_id=int(node["id"]), method=support.method,
                        project_id=project_id if support.method == "xfs-project-quota" else None,
                        size_gb=new_storage, enforced=enforced, detail=detail)
@@ -438,8 +482,13 @@ def change_password(repo: Any, vps: Dict[str, Any], password: Optional[str] = No
     client, _ = _client_and_allocator(repo, vps)
     new_password = password or generate_password()
     running = ctr.simple_state(client, vps["container_name"]) == "running"
+    is_proxmox = proxmox.is_image(vps.get("docker_image") or vps.get("os_version"))
     if running:
         ok, note = ssh.set_root_password(client, vps["container_name"], new_password)
+    elif is_proxmox:
+        # There is no tgdbot init script to consume a staged credential on the
+        # next boot. Never report a password as changed when it was only staged.
+        ok, note = False, "Start the Proxmox VPS before changing its root password"
     else:
         # Stopped container: stage the credential for the next boot.
         ssh.write_credential(vps["container_name"], new_password)
@@ -510,6 +559,11 @@ def clone(repo: Any, vps: Dict[str, Any], new_name: str, *, owner_id: Any,
     from ..docker_backend.ports import PURPOSE_SSH
 
     container = vps["container_name"]
+    if proxmox.is_image(vps.get("docker_image") or vps.get("os_version")):
+        raise ContainerError(
+            "Proxmox cloning is disabled because both /var/lib/vz and "
+            "/var/lib/pve-cluster must be copied atomically.",
+            user_message="Proxmox cloning is not supported; create a new Proxmox VPS instead.")
     node = _node(repo, vps)
     client, allocator = _client_and_allocator(repo, vps)
     if repo.get_vps_by_container(new_name):
@@ -581,6 +635,10 @@ def migrate(repo: Any, vps: Dict[str, Any], target_node_id: int,
     from ..docker_backend import backups as backups_mod
 
     container = vps["container_name"]
+    if proxmox.is_image(vps.get("docker_image") or vps.get("os_version")):
+        raise ContainerError(
+            "Proxmox migration is disabled until both persistent volumes can be transferred.",
+            user_message="Proxmox migration between nodes is not supported.")
     source_node = _node(repo, vps)
     target_node = repo.get_node(int(target_node_id))
     if not target_node:

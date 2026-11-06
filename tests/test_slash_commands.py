@@ -22,19 +22,19 @@ def slash_commands(bot_module):
     return {
         command.name: command
         for command in bot_module.bot.tree.get_commands()
-        if isinstance(command, app_commands.Command)
+        if isinstance(command, (app_commands.Command, app_commands.Group))
     }
 
 
 def test_every_prefix_command_has_a_slash_equivalent():
-    """The 88 prefix commands must all be available to modern Discord clients."""
+    """Every top-level prefix command must have a slash equivalent."""
     import bot
 
     prefix = {command.name: command for command in bot.bot.commands}
     slash = slash_commands(bot)
 
-    assert len(prefix) == 88
-    assert len(slash) == 88
+    assert len(prefix) == 89
+    assert len(slash) == 89
     assert set(slash) == set(prefix), (
         f"missing={sorted(set(prefix) - set(slash))}; "
         f"extra={sorted(set(slash) - set(prefix))}"
@@ -67,6 +67,22 @@ def test_vps_and_ports_expose_their_remaining_arguments():
         assert "args" in parameters
         assert not parameters["args"].required
         assert parameters["args"].type.name == "string"
+
+
+def test_proxmox_grant_commands_are_real_slash_subcommands():
+    import bot
+
+    group = next(command for command in bot.bot.tree.get_commands()
+                 if isinstance(command, app_commands.Group) and command.name == "proxmox")
+    assert {command.name for command in group.commands} == {"give", "remove", "list"}
+    payload = group.to_dict(bot.bot.tree)
+    subcommands = {option["name"]: option for option in payload["options"]}
+    assert set(subcommands) == {"give", "remove", "list"}
+    for name in ("give", "remove"):
+        options = subcommands[name]["options"]
+        assert options[0]["name"] == "userid"
+        assert options[0]["required"] is True
+        assert len(options[0]["description"]) > 3
 
 
 def test_vps_context_menu_remains_registered():

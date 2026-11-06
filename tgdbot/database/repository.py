@@ -510,6 +510,31 @@ class Repository:
                                 (str(reference),)).rowcount > 0
 
     # ── plans ───────────────────────────────────────────────────────────────
+    # ── Proxmox access grants ──────────────────────────────────────────────
+    def grant_proxmox(self, user_id: Any, *, granted_by: Optional[Any] = None) -> bool:
+        with self.write() as conn:
+            conn.execute(
+                """INSERT INTO proxmox_grants (user_id, granted_by, created_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(user_id) DO UPDATE SET granted_by=excluded.granted_by""",
+                (str(user_id), str(granted_by) if granted_by is not None else None, _now()))
+            return True
+
+    def revoke_proxmox(self, user_id: Any) -> bool:
+        with self.write() as conn:
+            return conn.execute("DELETE FROM proxmox_grants WHERE user_id = ?",
+                                (str(user_id),)).rowcount > 0
+
+    def has_proxmox_grant(self, user_id: Any) -> bool:
+        if user_id is None:
+            return False
+        return self.query_one("SELECT 1 AS allowed FROM proxmox_grants WHERE user_id = ?",
+                              (str(user_id),)) is not None
+
+    def list_proxmox_grants(self) -> List[Dict[str, Any]]:
+        return [dict(row) for row in self.query_all(
+            "SELECT * FROM proxmox_grants ORDER BY created_at ASC, user_id ASC")]
+
     def list_plans(self, enabled_only: bool = True) -> List[Dict[str, Any]]:
         sql = "SELECT * FROM resource_plans"
         if enabled_only:

@@ -76,6 +76,17 @@ DOCKER_WORKER_THREADS: int = max(2, env_int("DOCKER_WORKER_THREADS", 8))
 
 DOCKER_DEFAULT_IMAGE: str = str(env("DOCKER_DEFAULT_IMAGE", "ubuntu:24.04"))
 DOCKER_BACKUP_HELPER_IMAGE: str = str(env("DOCKER_BACKUP_HELPER_IMAGE", "alpine:3.20"))
+#: Proxmox VE is a separate, grant-gated workload — never a public SSH image.
+#: The tag follows dockur/proxmox's Docker tag (repository releases use a `v`
+#: prefix, Docker image tags do not). Pinning avoids surprise major upgrades.
+PROXMOX_IMAGE: str = str(env("PROXMOX_IMAGE", "dockurr/proxmox:9.2.20"))
+PROXMOX_CONTAINER_PORT: int = 8006
+PROXMOX_MIN_RAM_MB: int = 2048
+PROXMOX_MIN_STORAGE_GB: int = 32
+PROXMOX_REQUIRE_KVM: bool = env_bool("PROXMOX_REQUIRE_KVM", True)
+PROXMOX_REQUIRE_FUSE: bool = env_bool("PROXMOX_REQUIRE_FUSE", True)
+PROXMOX_READY_ATTEMPTS: int = env_int("PROXMOX_READY_ATTEMPTS", 90)
+PROXMOX_READY_INTERVAL: float = env_float("PROXMOX_READY_INTERVAL", 2.0)
 #: Allow an administrator-approved custom image to be used for new VPS.
 DOCKER_ALLOW_CUSTOM_IMAGES: bool = env_bool("DOCKER_ALLOW_CUSTOM_IMAGES", True)
 #: Always `docker pull` before create, even when a local copy exists.
@@ -151,6 +162,9 @@ LABEL_OWNER: str = "tgdbot.owner"
 LABEL_NODE: str = "tgdbot.node"
 LABEL_IMAGE: str = "tgdbot.image"
 LABEL_ROLE: str = "tgdbot.role"
+LABEL_WORKLOAD: str = "tgdbot.workload"
+WORKLOAD_VPS: str = "vps"
+WORKLOAD_PROXMOX: str = "proxmox"
 ROLE_VPS: str = "vps"
 ROLE_BACKUP_HELPER: str = "backup-helper"
 
@@ -214,7 +228,7 @@ DATABASE_PATH: Path = env_path("DATABASE_PATH", str(BASE_DIR / "vps.db"))
 DATABASE_BACKUP_DIR: Path = env_path("DATABASE_BACKUP_DIR", str(BASE_DIR / "backups"))
 MIGRATION_REPORT_DIR: Path = env_path("MIGRATION_REPORT_DIR", str(BASE_DIR / "migration_reports"))
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 # ── Image catalogue ─────────────────────────────────────────────────────────
@@ -229,6 +243,9 @@ class ImageSpec:
     family: str          # debian | alpine | rhel
     description: str = ""
     features: List[str] = field(default_factory=list)
+    #: ``vps`` uses the SSH supervisor; ``proxmox`` is a separately gated
+    #: privileged systemd workload with its own persistence and web console.
+    kind: str = "vps"
 
     @property
     def slug(self) -> str:
@@ -241,6 +258,9 @@ class ImageSpec:
 #: The OS list offered in every Discord dropdown.  ``value`` is the Docker image
 #: reference, so the same identifier is stored in ``vps.os_version``.
 DEFAULT_IMAGES: List[ImageSpec] = [
+    ImageSpec("Proxmox VE 9.2 (grant required)", PROXMOX_IMAGE, "🛡️", "proxmox",
+              "Proxmox VE web console — admins and explicitly granted users only",
+              ["Proxmox VE", "Web UI :8006", "KVM"], kind="proxmox"),
     ImageSpec("Ubuntu 24.04 LTS (Noble)", "ubuntu:24.04", "🟠", "debian",
               "Latest LTS Ubuntu — recommended", ["SSH", "APT", "Cron"]),
     ImageSpec("Ubuntu 22.04 LTS (Jammy)", "ubuntu:22.04", "🟠", "debian",

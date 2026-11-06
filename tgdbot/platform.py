@@ -24,6 +24,7 @@ from .docker_backend import (
     images as images_mod,
     monitoring,
     nodes as nodes_mod,
+    proxmox,
     resources,
     security,
     ssh,
@@ -98,17 +99,45 @@ class Platform:
         return nodes_mod.client_for(node)
 
     # ── images ──────────────────────────────────────────────────────────────
-    async def image_options(self) -> List[Dict[str, Any]]:
+    async def image_options(self, *, user_id: Optional[Any] = None,
+                            is_admin: bool = False) -> List[Dict[str, Any]]:
         custom = await run_in_thread(self.repo.list_approved_images)
-        return images_mod.catalogue(custom)
+        items = images_mod.catalogue(custom)
+        if is_admin:
+            return items
+        granted = bool(user_id is not None and await run_in_thread(
+            self.repo.has_proxmox_grant, user_id))
+        return [item for item in items
+                if item.get("kind") != config.WORKLOAD_PROXMOX or granted]
+
+    async def has_proxmox_access(self, user_id: Any, *, is_admin: bool = False) -> bool:
+        return bool(is_admin or await run_in_thread(self.repo.has_proxmox_grant, user_id))
+
+    async def grant_proxmox(self, user_id: Any, *, granted_by: Optional[Any] = None) -> bool:
+        return await run_in_thread(self.repo.grant_proxmox, user_id, granted_by=granted_by)
+
+    async def revoke_proxmox(self, user_id: Any) -> bool:
+        return await run_in_thread(self.repo.revoke_proxmox, user_id)
+
+    async def list_proxmox_grants(self) -> List[Dict[str, Any]]:
+        return await run_in_thread(self.repo.list_proxmox_grants)
 
     async def add_image(self, reference: str, *, label: str = "", emoji: str = "🐳",
-                        description: str = "", added_by: Optional[Any] = None) -> bool:
+                        description: str = "", added_by: Optional[Any] = None) -> Dict[str, Any]:
+        reference = reference.strip()
         ok, reason = security.validate_image_reference(reference)
         if not ok:
             raise TgdBotError(reason, user_message=reason)
-        return await run_in_thread(self.repo.add_image, reference, label=label, emoji=emoji,
-                                   description=description, added_by=added_by)
+        proxmox.assert_supported_reference(reference)
+        client = await self.local_client()
+        # Pull and inspect before approval. A database row alone neither makes
+        # an image deployable nor proves it is a supported Linux rootfs.
+        attrs = await run_in_thread(images_mod.ensure_image, client, reference)
+        images_mod.validate_image_platform(attrs, reference)
+        await run_in_thread(self.repo.add_image, reference, label=label, emoji=emoji,
+                            description=description, added_by=added_by)
+        custom = await run_in_thread(self.repo.list_approved_images)
+        return images_mod.resolve(reference, custom)
 
     async def remove_image(self, reference: str) -> bool:
         return await run_in_thread(self.repo.remove_image, reference)

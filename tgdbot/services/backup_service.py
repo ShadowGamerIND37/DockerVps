@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from .. import config
 from ..docker_backend import backups as backups_mod
-from ..docker_backend import nodes as nodes_mod
+from ..docker_backend import nodes as nodes_mod, proxmox
 from ..errors import BackupError
 from . import lifecycle
 
@@ -34,6 +34,10 @@ def create(repo: Any, vps: Dict[str, Any], *, note: str = "", mode: str = "pause
            scheduled: bool = False, progress: Optional[Progress] = None) -> Dict[str, Any]:
     """Create a backup and record it."""
     container = vps["container_name"]
+    if proxmox.is_image(vps.get("docker_image") or vps.get("os_version")):
+        raise BackupError(
+            "A regular VPS backup contains only one volume and would be incomplete for Proxmox.",
+            user_message="Proxmox backups are disabled; use Proxmox's own backup tools inside its console.")
     if str(vps.get("backend") or "docker") != "docker":
         raise BackupError(
             f"`{container}` is a legacy {vps.get('backend')} record, not a Docker VPS",
@@ -55,6 +59,10 @@ def create(repo: Any, vps: Dict[str, Any], *, note: str = "", mode: str = "pause
 
 def restore(repo: Any, vps: Dict[str, Any], backup_name: str, *,
             progress: Optional[Progress] = None) -> Dict[str, Any]:
+    if proxmox.is_image(vps.get("docker_image") or vps.get("os_version")):
+        raise BackupError(
+            "Regular one-volume backups cannot safely restore a Proxmox VPS.",
+            user_message="Proxmox restore is disabled; use Proxmox's own backup tools.")
     record = repo.get_backup(backup_name)
     if not record:
         raise BackupError(f"No backup named {backup_name}")

@@ -379,6 +379,10 @@ def set_root_password(client: Any, container_name: str, password: str) -> Tuple[
     never appears in an argument list, an environment variable or a log line.
     """
     try:
+        # Native systemd workloads (Proxmox) do not mount the SSH supervisor's
+        # runtime directory, so create it before staging the same secret file.
+        containers.exec_argv(client, container_name,
+                             ["sh", "-c", "mkdir -p /run/tgdbot"], timeout=30)
         if not containers.put_file(client, container_name, "/run/tgdbot",
                                    f"root:{password}\n".encode("utf-8"),
                                    filename="root.credential", mode=0o600):

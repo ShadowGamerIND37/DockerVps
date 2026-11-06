@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Optional
 from .. import config
 from ..errors import ImageError, ImageNotApproved
 from .client import is_transient
+from . import proxmox
 from .security import validate_image_reference
 
 logger = logging.getLogger("tgdbot.docker.images")
@@ -36,13 +37,15 @@ def catalogue(custom: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, A
             "description": spec.description,
             "features": list(spec.features),
             "custom": False,
+            "kind": spec.kind,
+            "restricted": spec.kind == config.WORKLOAD_PROXMOX,
         }
         for spec in config.DEFAULT_IMAGES
     ]
     seen = {item["value"] for item in items}
     for row in custom or []:
         ref = str(row.get("reference") or "").strip()
-        if not ref or ref in seen:
+        if not ref or ref in seen or proxmox.is_proxmox_reference(ref):
             continue
         seen.add(ref)
         items.append({
@@ -53,6 +56,8 @@ def catalogue(custom: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, A
             "description": str(row.get("description") or "Administrator approved image"),
             "features": ["SSH"],
             "custom": True,
+            "kind": config.WORKLOAD_VPS,
+            "restricted": False,
         })
     return items
 
@@ -63,21 +68,29 @@ def resolve(image_ref: str, custom: Optional[List[Dict[str, Any]]] = None) -> Di
     ok, reason = validate_image_reference(ref)
     if not ok:
         raise ImageError(reason)
+    proxmox.assert_supported_reference(ref)
     for item in catalogue(custom):
         if item["value"] == ref:
             return item
-    if not config.DOCKER_ALLOW_CUSTOM_IMAGES:
-        raise ImageNotApproved(f"`{ref}` is not in the approved image list.")
-    # Allowed but unknown: treat as a generic image so admins can still use it
-    # when DOCKER_ALLOW_CUSTOM_IMAGES is on.
-    return {
-        "label": ref, "value": ref, "emoji": config.image_emoji(ref),
-        "family": config.family_for(ref), "description": "Unlisted image",
-        "features": ["SSH"], "custom": True,
-    }
+    # Unknown references are never implicitly customer-selectable.  Admins
+    # approve custom images explicitly through the validated /image-add path.
+    raise ImageNotApproved(
+        f"`{ref}` is not in the approved image list.",
+        user_message="That image is not approved. Ask an administrator to add it with /image-add.",
+    )
 
 
 # ── pulling ─────────────────────────────────────────────────────────────────
+
+def validate_image_platform(attrs: Dict[str, Any], reference: str) -> None:
+    """Only Linux rootfs images can be bootstrapped by the VPS supervisor."""
+    platform = str(attrs.get("Os") or attrs.get("OS") or "linux").lower()
+    if platform != "linux":
+        raise ImageError(
+            f"Image {reference} targets {platform}; the VPS backend supports Linux images only.",
+            user_message="Only Linux Docker images can be added as VPS operating systems.",
+        )
+
 
 def image_exists(client: Any, reference: str) -> bool:
     try:
