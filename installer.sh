@@ -45,7 +45,56 @@ EOF
 
 trap 'printf "\n"; warn "cancelled by user"; exit 130' INT
 
-APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_URL="${REPO_URL:-https://github.com/ShadowGamerIND37/DockerVps.git}"
+GIT_BIN="${GIT_BIN:-git}"
+if [[ $EUID -eq 0 ]]; then
+  DEFAULT_INSTALL_DIR="/opt/tgdbot"
+else
+  DEFAULT_INSTALL_DIR="${HOME:-$PWD}/tgdbot"
+fi
+# APP_DIR remains a useful override for tests and existing installations. When
+# the script came from curl/process substitution, it is also the clone target
+# unless INSTALL_DIR was explicitly supplied.
+INSTALL_DIR="${INSTALL_DIR:-${APP_DIR:-$DEFAULT_INSTALL_DIR}}"
+
+bootstrap_repository() {
+  local target="$INSTALL_DIR"
+  if [[ -f "$target/.env.example" && -f "$target/installer.sh" ]]; then
+    info "using existing TGD Bot checkout at $target"
+  else
+    step "Download TGD Bot files"
+    if ! command -v "$GIT_BIN" >/dev/null 2>&1; then
+      if [[ "$GIT_BIN" == "git" && $EUID -eq 0 ]] && command -v apt-get >/dev/null 2>&1; then
+        info "git is not installed; installing it first"
+        apt-get update -qq
+        apt-get install -y -qq git
+      else
+        die "git is required to download TGD Bot; install git and try again"
+      fi
+    fi
+    [[ ! -e "$target" || -d "$target" ]] || die "$target exists but is not a directory"
+    if [[ -d "$target" ]] && [[ -n "$(find "$target" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+      die "$target is not an empty TGD Bot checkout; set INSTALL_DIR to another directory"
+    fi
+    mkdir -p "$(dirname "$target")"
+    info "cloning $REPO_URL into $target"
+    "$GIT_BIN" clone --depth 1 "$REPO_URL" "$target"
+  fi
+  [[ -f "$target/.env.example" && -f "$target/installer.sh" ]] || \
+    die "the downloaded checkout is incomplete (missing installer.sh or .env.example)"
+  # Preserve the original arguments and, importantly, the terminal's stdin so
+  # the cloned script can ask for token/admin/owner values interactively.
+  exec bash "$target/installer.sh" "$@"
+}
+
+# A local repository has .env.example next to installer.sh. A script read from
+# /dev/fd (bash <(curl ...)) or stdin does not, so obtain the real files first.
+if [[ ! -f "$SCRIPT_DIR/.env.example" ]]; then
+  bootstrap_repository "$@"
+fi
+
+APP_DIR="${APP_DIR:-$SCRIPT_DIR}"
 SERVICE_NAME="${SERVICE_NAME:-tgdbot}"
 SERVICE_USER="${SERVICE_USER:-tgdbot}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
@@ -55,7 +104,6 @@ DB_PATH="${DATABASE_PATH:-$APP_DIR/vps.db}"
 UPDATE_UNIT_NAME="${UPDATE_UNIT_NAME:-tgdbot-auto-update}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
-GIT_BIN="${GIT_BIN:-git}"
 AUTO_UPDATE_INTERVAL="${AUTO_UPDATE_INTERVAL:-1h}"
 
 cd "$APP_DIR"
@@ -76,6 +124,8 @@ Usage:
                                     Disable the timer and remove its units
 
 During --install, press Enter at any prompt to keep that .env value unchanged.
+A curl/process-substitution first run clones into INSTALL_DIR (default:
+/opt/tgdbot for root, ~/tgdbot otherwise), then re-executes the local script.
 The automatic updater uses git pull --ff-only and refuses a dirty worktree.
 EOF
 }
