@@ -60,6 +60,14 @@ def test_capabilities_are_dropped():
         assert dangerous in dropped, f"{dangerous} was not dropped"
 
 
+def test_openssh_privilege_separation_retains_sys_chroot():
+    """Dropping this capability makes sshd reset every pre-auth connection."""
+    assert "SYS_CHROOT" in security.CAP_KEEP
+    assert "SYS_CHROOT" not in set(_spec().get("cap_drop") or [])
+    # A caller-supplied extra drop must not accidentally override CAP_KEEP.
+    assert "SYS_CHROOT" not in security.cap_drop_list(extra_drop=["SYS_CHROOT"])
+
+
 def test_no_new_privileges_is_opt_in_and_off_by_default():
     """
     ``no-new-privileges`` breaks su/sudo and PAM-backed sshd root logins, so it
