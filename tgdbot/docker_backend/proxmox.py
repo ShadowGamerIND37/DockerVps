@@ -236,6 +236,81 @@ def build_container_spec(*, container_name: str, image_ref: str, password_hash_v
     return spec
 
 
+_CERT_CHECK_SCRIPT = r"""cert=/etc/pve/local/pve-ssl.pem
+key=/etc/pve/local/pve-ssl.key
+[ -s "$cert" ] && [ -s "$key" ] || exit 1
+openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1 || exit 1
+openssl pkey -in "$key" -noout -check >/dev/null 2>&1 || exit 1
+cert_public=$(openssl x509 -in "$cert" -noout -pubkey 2>/dev/null)
+key_public=$(openssl pkey -in "$key" -pubout 2>/dev/null)
+[ -n "$cert_public" ] && [ "$cert_public" = "$key_public" ]
+"""
+_CERT_UPDATE_SCRIPT = "timeout 100s pvecm updatecerts --force 2>&1"
+_CERT_RESTART_SCRIPT = "timeout 100s systemctl restart pveproxy 2>&1"
+
+
+def _run_certificate_command(client: Any, container_name: str, script: str,
+                             *, user: str) -> tuple[int, str, str]:
+    try:
+        return ctr.exec_argv(client, container_name, ["sh", "-c", script], user=user)
+    except Exception as exc:  # the service may still be initializing pmxcfs
+        return -1, "", str(exc)
+
+
+def _certificate_output(code: int, stdout: str, stderr: str) -> str:
+    text = "\n".join(part.strip() for part in (stdout, stderr) if part and part.strip())
+    return text or (f"command exited with status {code}" if code else "")
+
+
+def ensure_console_certificate(client: Any, container_name: str, *, attempts: int = 2,
+                               interval: float = 2.0) -> str:
+    """Ensure pveproxy has a usable node certificate before probing its console.
+
+    The pinned image starts pveproxy even when its certificate-preparation
+    ``ExecStartPre`` fails. That leaves a listening socket whose workers exit
+    repeatedly, so a network-only readiness probe can wait forever. Check the
+    certificate as the same user as the workers, repair it with Proxmox's own
+    supported command when necessary, then restart pveproxy. A valid existing
+    certificate is never regenerated.
+    """
+    code, stdout, stderr = _run_certificate_command(
+        client, container_name, _CERT_CHECK_SCRIPT, user="www-data")
+    if code == 0:
+        return "Proxmox console certificate is valid"
+
+    last_output = _certificate_output(code, stdout, stderr)
+    tries = max(1, int(attempts))
+    pause = max(0.0, float(interval))
+    for attempt in range(tries):
+        code, stdout, stderr = _run_certificate_command(
+            client, container_name, _CERT_UPDATE_SCRIPT, user="root")
+        update_output = _certificate_output(code, stdout, stderr)
+        last_output = update_output
+        if code == 0:
+            # Check again as www-data: root-only readability is not sufficient
+            # for the pveproxy workers that load the TLS context.
+            check_code, check_out, check_err = _run_certificate_command(
+                client, container_name, _CERT_CHECK_SCRIPT, user="www-data")
+            if check_code != 0:
+                validation_output = ("Certificate is still unusable after pvecm updatecerts: "
+                                     + _certificate_output(check_code, check_out, check_err))
+                last_output = "\n".join(part for part in (update_output, validation_output) if part)
+            else:
+                code, stdout, stderr = _run_certificate_command(
+                    client, container_name, _CERT_RESTART_SCRIPT, user="root")
+                last_output = _certificate_output(code, stdout, stderr)
+                if code == 0:
+                    return "Proxmox console certificate repaired; pveproxy restarted"
+        if attempt + 1 < tries and pause:
+            time.sleep(pause)
+
+    raise ContainerError(
+        f"Proxmox console certificate setup failed: {last_output[:700]}",
+        detail=last_output[:4000],
+        user_message="Proxmox could not prepare its console certificate; see the deployment error.",
+    )
+
+
 def _get_console_response(host: str, port: int, scheme: str, path: str) -> tuple[int, Optional[str]]:
     """Make one unauthenticated request and return its status and redirect target."""
     if scheme == "https":

@@ -101,6 +101,78 @@ def test_verify_web_does_not_accept_a_redirect_before_tls_is_ready(monkeypatch):
     assert all(connection.closed for connection in connections)
 
 
+def test_certificate_check_leaves_a_healthy_certificate_untouched(monkeypatch):
+    calls = []
+
+    def exec_argv(_client, _name, argv, **kwargs):
+        calls.append((argv, kwargs))
+        return 0, "", ""
+
+    monkeypatch.setattr(proxmox.ctr, "exec_argv", exec_argv)
+    note = proxmox.ensure_console_certificate(object(), "pve-vps-1", interval=0)
+
+    assert "valid" in note
+    assert len(calls) == 1
+    assert calls[0][1]["user"] == "www-data"
+    assert "pve-ssl.pem" in calls[0][0][2]
+    assert "pvecm updatecerts" not in calls[0][0][2]
+
+
+def test_certificate_repair_regenerates_then_restarts_pveproxy(monkeypatch):
+    calls = []
+    responses = iter([
+        (1, "", "missing certificate"),
+        (0, "certificate regenerated", ""),
+        (0, "", ""),
+        (0, "", ""),
+    ])
+
+    def exec_argv(_client, _name, argv, **kwargs):
+        calls.append((argv, kwargs))
+        return next(responses)
+
+    monkeypatch.setattr(proxmox.ctr, "exec_argv", exec_argv)
+    note = proxmox.ensure_console_certificate(object(), "pve-vps-1", interval=0)
+
+    assert "repaired" in note
+    assert len(calls) == 4
+    assert "pvecm updatecerts --force" in calls[1][0][2]
+    assert "systemctl restart pveproxy" in calls[3][0][2]
+    assert [call[1]["user"] for call in calls] == ["www-data", "root", "www-data", "root"]
+
+
+def test_certificate_repair_is_bounded_and_preserves_command_output(monkeypatch):
+    calls = []
+
+    def exec_argv(_client, _name, argv, **_kwargs):
+        calls.append(argv)
+        if "pvecm updatecerts" in argv[2]:
+            return 1, "", "pmxcfs: no quorum"
+        return 1, "", "certificate missing"
+
+    monkeypatch.setattr(proxmox.ctr, "exec_argv", exec_argv)
+    with pytest.raises(ContainerError) as caught:
+        proxmox.ensure_console_certificate(object(), "pve-vps-1", attempts=2, interval=0)
+
+    assert "pmxcfs: no quorum" in str(caught.value)
+    assert len(calls) == 3  # initial check plus two bounded repair attempts
+    assert all("systemctl restart" not in argv[2] for argv in calls)
+
+
+def test_certificate_failure_rolls_back_provisioning(repo, proxmox_ready, engine, monkeypatch):
+    def fail_certificate(*_args, **_kwargs):
+        raise ContainerError("pvecm updatecerts: pmxcfs no quorum")
+
+    monkeypatch.setattr(proxmox, "ensure_console_certificate", fail_certificate)
+    with pytest.raises(ProvisioningError) as caught:
+        provisioning.provision(repo, request(requester_admin=True))
+
+    assert "pmxcfs no quorum" in str(caught.value)
+    assert "pve-vps-1" not in engine.containers
+    assert not engine.volumes
+    assert repo.get_vps_by_container("pve-vps-1") is None
+
+
 def test_ungranted_user_is_rejected_before_any_docker_mutation(repo, proxmox_ready, engine):
     with pytest.raises(ProvisioningError) as caught:
         provisioning.provision(repo, request())
