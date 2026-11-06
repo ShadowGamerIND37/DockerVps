@@ -167,6 +167,68 @@ links lock after repeated wrong PINs, and sessions expire.
 
 ---
 
+## Proxmox VE (separately gated workload)
+
+Proxmox is available through the community **`dockurr/proxmox`** image, pinned by
+default to `dockurr/proxmox:9.2.20`. This is not an official Proxmox-maintained
+Docker image. It runs Proxmox's native systemd stack and is deliberately **not**
+handled as another SSH-oriented Linux rootfs.
+
+### Access grants
+
+Administrators can always select and create Proxmox VPS. A non-admin needs an
+explicit Discord-user grant:
+
+```text
+/proxmox give userid:123456789012345678
+/proxmox remove userid:123456789012345678
+/proxmox list
+```
+
+Prefix equivalents are `!proxmox give 123456789012345678` and
+`!proxmox remove 123456789012345678`. Grants are checked in the selectors and
+again by the provisioning service, so a crafted interaction or unapproved image
+reference cannot bypass them. Revocation blocks new selection/creation; it does
+not delete or lock an existing VPS.
+
+**Security boundary:** the Proxmox image requires privileged Docker mode. A grant
+therefore authorizes that user to create this privileged workload on the selected
+node. Use Proxmox only on a trusted, preferably dedicated node. Ordinary and
+public non-Proxmox VPS retain the existing unprivileged capability policy; the
+Proxmox profile never applies to them.
+
+### Host and runtime requirements
+
+- Linux Docker node with hardware virtualization and `/dev/kvm`, plus `/dev/fuse`.
+- At least **2 GB RAM and 32 GB storage** per Proxmox VPS. The public creation
+  flow raises its normal disk minimum to 32 GB only after an authorized Proxmox
+  selection.
+- OpenSSL on the bot host. The generated root password is converted to a
+  SHA-512 `PASSWORD_HASH`; plaintext `PASSWORD` is never placed in container
+  metadata.
+- A published TCP port mapped to container port **8006**. The DM contains the
+  native `https://YOUR_SERVER_IP:port` console, not SSH/WebSSH instructions.
+  Proxmox initially uses a self-signed certificate.
+- Persistent `tgdbot_<name>` at `/var/lib/vz` and
+  `tgdbot_<name>-pve-cluster` at `/var/lib/pve-cluster`.
+
+Power actions, resize/recreate, port republication, reinstall and deletion retain
+the Proxmox runtime and volume contract. Regular one-volume backup/restore,
+clone and cross-node migration are rejected rather than producing an incomplete
+Proxmox copy; use Proxmox's own backup tools inside the console. Changing between
+Proxmox and a regular OS requires a new VPS.
+
+### Custom Docker images
+
+Only admins can use `/image-add`. The command now pulls and inspects the image,
+requires a Linux image, stores the approval, and refreshes both creation menus.
+Approved images must still provide a shell and a package manager supported by
+the VPS bootstrap (APT, APK, DNF or YUM); distroless, Windows and other
+non-Linux images are not VPS rootfs candidates. Custom Proxmox references are
+rejected so they cannot bypass the built-in Proxmox grant/runtime checks.
+
+---
+
 ## Multi-node
 
 Register remote Docker hosts as nodes:
@@ -219,7 +281,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**158 tests: 157 passed, 1 skipped.** They cover the security policy, port
+**177 tests: 176 passed, 1 skipped.** They cover the security policy, port
 allocation, schema migration, SSH verification retries and diagnostics, the
 provisioning transaction and rollback, the web terminal's credential handling,
 and backward compatibility across the UnixNodes → TGD Bot rebrand. They run
@@ -263,7 +325,9 @@ These are real, and the bot reports them rather than hiding them:
 
 ## Discord commands
 
-Every one of the **88 prefix commands** also has a slash-command equivalent.
+Every one of the **89 top-level prefix commands** also has a slash-command equivalent.
+The Proxmox group adds the `/proxmox give`, `/proxmox remove`, and `/proxmox list`
+subcommands.
 The bot syncs the application-command tree on startup; prefix commands and their
 aliases remain available. The existing `/manage`, `/myvps`, `/ping`,
 `/dashboard`, and `/help` interfaces are unchanged.

@@ -1,3 +1,23 @@
+# Additive v12 update — Proxmox grants
+
+The v12 migration adds one table, `proxmox_grants`, and advances the schema
+version to 12. It does not rename/drop tables or columns and does not alter
+existing VPS, users, ports, backups, snapshots or settings. The normal startup
+migration applies it automatically; `python -m tgdbot.scripts.migrate_database`
+can also be run first to inspect the report.
+
+Administrators have implicit Proxmox access and need no grant row. To authorize
+a non-admin, run `/proxmox give userid:<Discord user ID>` after upgrading.
+Existing VPS keep their current workload and access. No existing container is
+recreated or made privileged by the migration.
+
+Before creating Proxmox, verify the selected node has `/dev/kvm` and `/dev/fuse`,
+at least 2 GB RAM/32 GB disk per instance, and a reachable published HTTPS port.
+Set `YOUR_SERVER_IP` to the address users can reach. Proxmox uses a separate
+privileged runtime; upgrading does not change the ordinary VPS security policy.
+
+---
+
 # Migration Guide — v10 (LXC/LXD) → v11 (Docker Engine)
 
 This document covers upgrading an existing TGD Bot v10 installation to v11.

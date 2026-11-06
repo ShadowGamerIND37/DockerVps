@@ -25,10 +25,10 @@ from .. import config
 from ..concurrency import THREAD_LIMITS
 from ..docker_backend import containers as ctr
 from ..docker_backend import images as images_mod
-from ..docker_backend import monitoring, nodes as nodes_mod, resources, security, ssh, volumes
+from ..docker_backend import monitoring, nodes as nodes_mod, proxmox, resources, security, ssh, volumes
 from ..docker_backend.client import POOL
 from ..docker_backend.ports import PURPOSE_SSH, PURPOSE_USER, PortAllocator
-from ..errors import ProvisioningError, TgdBotError
+from ..errors import ContainerError, ProvisioningError, SecurityPolicyError, TgdBotError
 from ..database import models
 
 logger = logging.getLogger("tgdbot.services.provisioning")
@@ -56,6 +56,21 @@ STEPS: Tuple[str, ...] = (
     "Register in the database",          # 17
 )
 
+_PROXMOX_STEP_NAMES = {
+    3: "Reserve the Proxmox HTTPS host port",
+    6: "Create both Proxmox persistent volumes",
+    10: "Publish the Proxmox HTTPS port",
+    12: "Start the Proxmox systemd environment",
+    13: "Confirm native Proxmox service management",
+    15: "Verify the Proxmox HTTPS console",
+}
+
+
+def steps_for(image_ref: str) -> Tuple[str, ...]:
+    if not proxmox.is_image(image_ref):
+        return STEPS
+    return tuple(_PROXMOX_STEP_NAMES.get(index, name) for index, name in enumerate(STEPS))
+
 
 @dataclass
 class ProvisionResult:
@@ -81,9 +96,20 @@ class ProvisionResult:
     ssh_note: str
     record: Dict[str, Any] = field(default_factory=dict)
     steps: List[Dict[str, str]] = field(default_factory=list)
+    workload: str = config.WORKLOAD_VPS
+    container_port: int = config.SSH_CONTAINER_PORT
+    access_verified: bool = False
+    access_note: str = ""
 
     def ssh_command(self, host: str) -> str:
+        if self.workload == config.WORKLOAD_PROXMOX:
+            raise ContainerError("Proxmox uses its HTTPS console, not an SSH connection shortcut")
         return f"ssh root@{host} -p {self.ssh_host_port}"
+
+    def web_console_url(self, host: str) -> Optional[str]:
+        if self.workload != config.WORKLOAD_PROXMOX:
+            return None
+        return f"https://{host}:{self.ssh_host_port}"
 
 
 @dataclass
@@ -101,6 +127,9 @@ class ProvisionRequest:
     password: Optional[str] = None
     extra_ports: List[Tuple[int, str]] = field(default_factory=list)
     host_motd: str = ""
+    #: Authorization is checked again in the backend; UI filtering is not enough.
+    requester_id: Optional[Any] = None
+    requester_admin: bool = False
 
 
 def generate_password(length: int = 20) -> str:
@@ -152,13 +181,16 @@ class Provisioner:
         self.reservations: List[Any] = []
         self.container_created = False
         self.volume_created = False
+        self.cluster_volume_created = False
         self.row_inserted = False
+        self.workload = config.WORKLOAD_VPS
+        self.step_names = STEPS
 
     # ── helpers ─────────────────────────────────────────────────────────────
     def _step(self, index: int, state: str, detail: str = "") -> None:
         self.step_log.append({"index": str(index), "state": state, "detail": detail})
         logger.info("provision %s [%d/%d] %s %s", self.request.container_name, index + 1,
-                    len(STEPS), state, detail)
+                    len(self.step_names), state, detail)
         if self.progress:
             try:
                 self.progress(index, state, detail)
@@ -168,7 +200,7 @@ class Provisioner:
     def _fail(self, index: int, exc: BaseException) -> ProvisioningError:
         self._step(index, "failed", str(exc)[:200])
         return ProvisioningError(
-            f"Provisioning failed at step {index + 1} ({STEPS[index]}): {exc}",
+            f"Provisioning failed at step {index + 1} ({self.step_names[index]}): {exc}",
             detail=str(exc),
             cleanup=self.cleanup, cleanup_errors=self.cleanup_errors)
 
@@ -207,6 +239,21 @@ class Provisioner:
         except TgdBotError as exc:
             raise self._fail(0, exc) from exc
         image_ref = image_entry["value"]
+        if image_entry.get("kind") == config.WORKLOAD_PROXMOX or proxmox.is_image(image_ref):
+            self.workload = config.WORKLOAD_PROXMOX
+            self.step_names = steps_for(image_ref)
+            requester = request.requester_id if request.requester_id is not None else request.owner_id
+            if not request.requester_admin and not self.repo.has_proxmox_grant(requester):
+                raise self._fail(0, SecurityPolicyError(
+                    f"User {requester} has not been granted Proxmox access",
+                    user_message="Proxmox access requires an administrator grant. "
+                                 "Ask an admin to run /proxmox give with your Discord user ID.",
+                ))
+            try:
+                proxmox.validate_resources(ram_mb, storage_gb)
+            except TgdBotError as exc:
+                raise self._fail(0, exc) from exc
+            pids = proxmox.effective_pids(pids)
         self._step(0, "done", f"{image_ref} • {ram_mb} MiB • {cpu:g} vCPU • {storage_gb} GB")
 
         # 1 — node selection -------------------------------------------------
@@ -234,15 +281,19 @@ class Provisioner:
         try:
             images_mod.ensure_image  # attribute check keeps the import honest
             monitoring.engine_healthy(self.client)
+            host_note = (proxmox.preflight(node_is_local=bool(node.get("is_local")))
+                         if self.workload == config.WORKLOAD_PROXMOX else "capacity available")
         except Exception as exc:
             raise self._fail(2, exc) from exc
-        self._step(2, "done", "capacity available")
+        self._step(2, "done", host_note)
 
-        # 3 — reserve the SSH port ------------------------------------------
+        # 3 — reserve the SSH or Proxmox HTTPS port --------------------------
         self._step(3, "running")
+        access_container_port = (proxmox.WEB_PORT if self.workload == config.WORKLOAD_PROXMOX
+                                 else config.SSH_CONTAINER_PORT)
         try:
             self.reservations = self.allocator.reserve(
-                container, config.SSH_CONTAINER_PORT, purpose=PURPOSE_SSH,
+                container, access_container_port, purpose=PURPOSE_SSH,
                 protocol="tcp", user_id=request.owner_id)
             for host_port, container_port, protocol in request.extra_ports:
                 self.reservations.extend(self.allocator.reserve(
@@ -250,8 +301,9 @@ class Provisioner:
                     protocol=str(protocol), user_id=request.owner_id))
         except TgdBotError as exc:
             raise self._fail(3, exc) from exc
-        ssh_host_port = self.allocator.ssh_port(container) or 0
-        self._step(3, "done", f"host port {ssh_host_port}")
+        ssh_host_port = (int(self.reservations[0].host_port)
+                         if self.reservations else self.allocator.ssh_port(container) or 0)
+        self._step(3, "done", f"host port {ssh_host_port} → container {access_container_port}")
 
         # 4 — identity -------------------------------------------------------
         self._step(4, "running")
@@ -272,44 +324,63 @@ class Provisioner:
             raise self._fail(5, exc) from exc
         self._step(5, "done", image_ref)
 
-        # 6 — volume ---------------------------------------------------------
+        # 6 — volume(s) ------------------------------------------------------
         self._step(6, "running")
+        volume_labels = {
+            config.LABEL_MANAGED: "true",
+            config.LABEL_CONTAINER: container,
+            config.LABEL_OWNER: str(request.owner_id),
+            config.LABEL_VPS_ID: str(vps_id),
+            config.LABEL_NODE: str(node["id"]),
+        }
         try:
-            ssh.ensure_runtime_assets()
-            volumes.create(self.client, container, labels={
-                config.LABEL_MANAGED: "true",
-                config.LABEL_CONTAINER: container,
-                config.LABEL_OWNER: str(request.owner_id),
-                config.LABEL_VPS_ID: str(vps_id),
-                config.LABEL_NODE: str(node["id"]),
-            })
-            self.volume_created = True
-        except TgdBotError as exc:
+            if self.workload == config.WORKLOAD_PROXMOX:
+                volumes.create(self.client, container, labels=volume_labels)
+                self.volume_created = True
+                self.client.volumes.create(
+                    name=proxmox.cluster_volume_name(container), driver="local",
+                    labels=dict(volume_labels))
+                self.cluster_volume_created = True
+                volume_detail = (f"{volumes.volume_name(container)} + "
+                                 f"{proxmox.cluster_volume_name(container)}")
+            else:
+                ssh.ensure_runtime_assets()
+                volumes.create(self.client, container, labels=volume_labels)
+                self.volume_created = True
+                volume_detail = volumes.volume_name(container)
+        except Exception as exc:
             raise self._fail(6, exc) from exc
-        self._step(6, "done", volumes.volume_name(container))
+        self._step(6, "done", volume_detail)
 
         # 7 — container (+8 limits, +9 network, +10 ports: all set at create)
         self._step(7, "running")
-        ssh.write_credential(container, password)
-        if request.host_motd:
-            ssh.write_hook(container, request.host_motd)
-        binds = volumes.mounts_for(container, extra_binds=ssh.bind_mounts(container))
         publish_spec = self.allocator.publish_spec(container)
+        container_labels = {config.LABEL_VPS_ID: str(vps_id),
+                            config.LABEL_OWNER: str(request.owner_id),
+                            config.LABEL_NODE: str(node["id"]),
+                            config.LABEL_IMAGE: image_ref}
         try:
-            spec = ctr.build_container_spec(
-                container_name=container, image=image_ref, ram_mb=ram_mb, cpu=cpu, pids=pids,
-                publish_ip=self.allocator.publish_ip, published_ports=publish_spec,
-                volumes=binds,
-                labels={config.LABEL_VPS_ID: str(vps_id),
-                        config.LABEL_OWNER: str(request.owner_id),
-                        config.LABEL_NODE: str(node["id"]),
-                        config.LABEL_IMAGE: image_ref},
-                command=ssh.container_command(),
-                hostname=container[:63],
-            )
+            if self.workload == config.WORKLOAD_PROXMOX:
+                spec = proxmox.build_container_spec(
+                    container_name=container, image_ref=image_ref,
+                    password_hash_value=proxmox.password_hash(password),
+                    ram_mb=ram_mb, cpu=cpu, pids=pids,
+                    publish_ip=self.allocator.publish_ip, published_ports=publish_spec,
+                    labels=container_labels)
+            else:
+                ssh.write_credential(container, password)
+                if request.host_motd:
+                    ssh.write_hook(container, request.host_motd)
+                binds = volumes.mounts_for(container, extra_binds=ssh.bind_mounts(container))
+                spec = ctr.build_container_spec(
+                    container_name=container, image=image_ref, ram_mb=ram_mb, cpu=cpu, pids=pids,
+                    publish_ip=self.allocator.publish_ip, published_ports=publish_spec,
+                    volumes=binds, labels=container_labels,
+                    command=ssh.container_command(), hostname=container[:63],
+                )
             container_obj = self._with_guard("container_create", ctr.create, self.client, spec)
             self.container_created = True
-        except TgdBotError as exc:
+        except Exception as exc:
             raise self._fail(7, exc) from exc
         container_id = str(container_obj.short_id)
         self._step(7, "done", f"container {container_id}")
@@ -328,27 +399,31 @@ class Provisioner:
             raise self._fail(11, exc) from exc
         self._step(11, "done", "running")
 
-        # 12 — Linux initialization -----------------------------------------
+        # 12 — Linux/systemd initialization ---------------------------------
         self._step(12, "running")
-        report: Dict[str, Any] = {}
-        for attempt in range(6):
-            report = ssh.guest_report(self.client, container)
-            if report.get("SSHD") == "yes" or report.get("OS"):
-                break
-        self._step(12, "done",
-                   f"{report.get('OS') or 'unknown OS'} • kernel {report.get('KERNEL') or '?'}")
+        if self.workload == config.WORKLOAD_PROXMOX:
+            self._step(12, "done", "native Proxmox systemd entrypoint preserved")
+            self._step(13, "done", "Proxmox services are managed by systemd; SSH bootstrap skipped")
+        else:
+            report: Dict[str, Any] = {}
+            for attempt in range(6):
+                report = ssh.guest_report(self.client, container)
+                if report.get("SSHD") == "yes" or report.get("OS"):
+                    break
+            self._step(12, "done",
+                       f"{report.get('OS') or 'unknown OS'} • kernel {report.get('KERNEL') or '?'}")
 
-        # 13 — SSH -----------------------------------------------------------
-        self._step(13, "running")
-        if not ssh.wait_ready(self.client, container):
-            logs = ctr.logs(self.client, container, tail=40)
-            raise self._fail(13, ProvisioningError(
-                "sshd did not start inside the container", detail=logs,
-                user_message="SSH could not be started in the new VPS."))
-        ok, note = ssh.ensure_ssh_running(self.client, container)
-        if not ok:
-            raise self._fail(13, ProvisioningError(note, user_message=note))
-        self._step(13, "done", "sshd listening on port 22")
+            # 13 — SSH -------------------------------------------------------
+            self._step(13, "running")
+            if not ssh.wait_ready(self.client, container):
+                logs = ctr.logs(self.client, container, tail=40)
+                raise self._fail(13, ProvisioningError(
+                    "sshd did not start inside the container", detail=logs,
+                    user_message="SSH could not be started in the new VPS."))
+            ok, note = ssh.ensure_ssh_running(self.client, container)
+            if not ok:
+                raise self._fail(13, ProvisioningError(note, user_message=note))
+            self._step(13, "done", "sshd listening on port 22")
 
         # 14 — health --------------------------------------------------------
         self._step(14, "running")
@@ -365,15 +440,21 @@ class Provisioner:
             logger.warning("could not mark ports bound for %s: %s", container, exc)
         self._step(14, "done", "healthy • ports verified")
 
-        # 15 — SSH connectivity from the host -------------------------------
+        # 15 — access connectivity from the host -----------------------------
         self._step(15, "running")
-        ssh_ok, ssh_note = ssh.verify_access(
-            verification_host(self.node, self.allocator.publish_ip),
-            ssh_host_port, password)
-        self._step(15, "done" if ssh_ok else "failed", ssh_note[:80])
-        if not ssh_ok:
+        if self.workload == config.WORKLOAD_PROXMOX:
+            access_ok, access_note = proxmox.verify_web(
+                verification_host(self.node, self.allocator.publish_ip), ssh_host_port)
+            ssh_ok = False
+        else:
+            access_ok, access_note = ssh.verify_access(
+                verification_host(self.node, self.allocator.publish_ip),
+                ssh_host_port, password)
+            ssh_ok = access_ok
+        self._step(15, "done" if access_ok else "failed", access_note[:80])
+        if not access_ok:
             raise self._fail(15, ProvisioningError(
-                f"SSH verification failed: {ssh_note}", user_message=ssh_note))
+                f"Access verification failed: {access_note}", user_message=access_note))
 
         # 16 — storage quota -------------------------------------------------
         self._step(16, "running")
@@ -433,8 +514,10 @@ class Provisioner:
             container_id=container_id,
             quota_enforced=bool(quota["enforced"]), quota_method=str(quota["method"]),
             quota_detail=str(quota["detail"]),
-            ssh_verified=ssh_ok, ssh_note=ssh_note,
+            ssh_verified=ssh_ok, ssh_note=access_note,
             record=record, steps=self.step_log,
+            workload=self.workload, container_port=access_container_port,
+            access_verified=access_ok, access_note=access_note,
         )
 
     # ── quota ───────────────────────────────────────────────────────────────
@@ -448,7 +531,11 @@ class Provisioner:
         if support.supported:
             enforced, detail = resources.apply_quota(mountpoint, storage_gb, support.method,
                                                      project_id)
-        detail = f"{detail} {resources.DATA_VOLUME_QUOTA_NOTE}".strip()
+        quota_note = ("Quota covers /var/lib/vz; the small cluster-configuration volume "
+                      "is not independently size-capped."
+                      if self.workload == config.WORKLOAD_PROXMOX
+                      else resources.DATA_VOLUME_QUOTA_NOTE)
+        detail = f"{detail} {quota_note}".strip()
         self.repo.set_quota(container, node_id=int(self.node["id"]), method=support.method,
                             project_id=project_id if support.method == "xfs-project-quota" else None,
                             size_gb=storage_gb, enforced=enforced, detail=detail)
@@ -519,6 +606,10 @@ class Provisioner:
                 try:
                     volumes.remove(self.client, container, force=True)
                     self.cleanup.append(f"volume {volumes.volume_name(container)} removed")
+                    if self.cluster_volume_created:
+                        proxmox.remove_cluster_volume(self.client, container)
+                        self.cleanup.append(
+                            f"volume {proxmox.cluster_volume_name(container)} removed")
                 except Exception as exc:
                     self.cleanup_errors.append(f"volume removal failed: {exc}")
         if self.allocator is not None:
@@ -539,7 +630,8 @@ class Provisioner:
                 self.repo.delete_quota(container)
             except Exception as exc:
                 self.cleanup_errors.append(f"quota record cleanup failed: {exc}")
-        ssh.clear_credential(container)
+        if self.workload != config.WORKLOAD_PROXMOX:
+            ssh.clear_credential(container)
         logger.warning("provisioning rollback for %s: %s%s", container, self.cleanup,
                        f" (errors: {self.cleanup_errors})" if self.cleanup_errors else "")
         return list(self.cleanup)

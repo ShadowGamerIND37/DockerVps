@@ -10,7 +10,7 @@ Nothing here renames or drops an existing column: the original ``vps``,
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # ── columns added to existing tables ────────────────────────────────────────
 # (table, column definition).  Applied with ALTER TABLE … ADD COLUMN, so the
@@ -281,6 +281,14 @@ CREATE TABLE IF NOT EXISTS docker_images (
     approved    INTEGER DEFAULT 1,
     added_by    TEXT,
     created_at  TEXT NOT NULL
+);
+
+-- Per-user permission to select and provision the privileged Proxmox workload.
+-- Admins are implicitly authorized and do not need a row here.
+CREATE TABLE IF NOT EXISTS proxmox_grants (
+    user_id    TEXT PRIMARY KEY,
+    granted_by TEXT,
+    created_at TEXT NOT NULL
 );
 
 -- Administrator-configurable resource plans.

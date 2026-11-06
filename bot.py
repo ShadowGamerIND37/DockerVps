@@ -140,6 +140,7 @@ try:
         networking as tgd_networking,
         nodes as tgd_nodes_mod,
         ports as tgd_ports_mod,
+        proxmox as tgd_proxmox,
         resources as tgd_resources,
         security as tgd_security,
         ssh as tgd_ssh,
@@ -2315,6 +2316,13 @@ async def configure_ssh(container_name: str, node_id: int,
         else:
             return False, "Container did not reach the running state"
 
+    vps = await run_blocking(get_vps_by_container, container_name)
+    if vps and tgd_proxmox.is_image(vps.get("docker_image") or vps.get("os_version")):
+        if password:
+            # Proxmox uses PAM for its web console; there is no tgdbot sshd to
+            # restart or probe after chpasswd succeeds.
+            return await run_blocking(tgd_ssh.set_root_password, client, container_name, password)
+        return True, "Proxmox native services are running"
     if password:
         ok, note = await run_blocking(tgd_ssh.set_root_password, client, container_name, password)
         if not ok:
@@ -4676,6 +4684,8 @@ if WEBSSH_ENABLED:
         The password is stored **encrypted** inside the token record and is
         never handed to the browser.
         """
+        if vps and tgd_proxmox.is_image(vps.get("docker_image") or vps.get("os_version")):
+            raise ValueError("Proxmox uses its native HTTPS console; WebSSH tokens are not issued")
         name = container_name or (vps or {}).get("container_name")
         if not name:
             raise ValueError("issue_webssh_token needs a container_name (or a vps record)")
@@ -6109,6 +6119,22 @@ class ManageView(PanelView):
     # ── web ssh ──────────────────────────────────────────────────────────────
     async def _webssh(self, interaction: discord.Interaction) -> None:
         vps = self.vps
+        if tgd_proxmox.is_image(vps.get("docker_image") or vps.get("os_version")):
+            host_port = vps.get("ssh_host_port")
+            if not host_port:
+                await interaction.response.send_message(
+                    embed=error_embed("Console Port Missing", "The Proxmox HTTPS port is not recorded; contact an admin."),
+                    ephemeral=True)
+                return
+            url = f"https://{YOUR_SERVER_IP}:{int(host_port)}"
+            await interaction.response.send_message(
+                embed=create_embed(
+                    "Proxmox Web Console",
+                    f"Use the native Proxmox console for `{vps['container_name']}`.\n\n"
+                    f"[Open Proxmox VE]({url})\n`{url}`\n\n"
+                    "WebSSH is not used for Proxmox; log in with root and your Proxmox password.",
+                    COLORS["network"]), ephemeral=True)
+            return
         if not WEBSSH_ENABLED:
             await interaction.response.send_message(
                 embed=warning_embed("Web Terminal Disabled",
@@ -6228,6 +6254,73 @@ class ManageView(PanelView):
         except discord.HTTPException:
             pass
 
+    async def _perform_proxmox_reinstall(self, interaction: discord.Interaction, node_id: int,
+                                         os_version: str, os_name: str, os_emoji: str) -> None:
+        """Reinstall through the two-volume lifecycle, never the legacy SSH helper."""
+        vps = self.vps
+        container = vps["container_name"]
+        if int(node_id) != int(vps["node_id"]):
+            await interaction.followup.send(
+                embed=error_embed("Migration Unsupported", "Proxmox reinstall must stay on its current node; create a new VPS to change nodes."),
+                ephemeral=True)
+            return
+        node = await run_blocking(get_node, int(node_id))
+        if not node:
+            await interaction.followup.send(embed=error_embed("Node Unavailable", "The current Proxmox node no longer exists."), ephemeral=True)
+            return
+        steps = ["Stop & wipe Proxmox volumes", "Recreate both persistent volumes",
+                 "Create native Proxmox container", "Apply resource limits",
+                 "Start systemd & publish 8006", "Deliver credentials"]
+        panel = ProgressPanel(interaction.channel, f"Reinstalling {container}", steps,
+                              subtitle=f"{os_emoji} {os_name} • both Proxmox volumes will be wiped",
+                              color=COLORS["danger"], interaction=interaction)
+        await panel.start()
+        pump = PanelPump(panel, len(steps))
+        pump.start()
+        try:
+            result = await INFRA.reinstall(container, os_version, progress=pump.emit)
+            await pump.stop()
+            updated = await run_blocking(get_vps_by_container, container)
+            if not updated:
+                raise RuntimeError("Proxmox reinstall completed but the VPS record is missing")
+            self.vps.update(updated)
+        except Exception as exc:
+            await pump.stop(complete=False)
+            await panel.finish(final_embed=error_embed(
+                "Proxmox Reinstall Failed", truncate_text(exc, 800)))
+            logger.error("Proxmox reinstall failed for %s: %s", container, exc, exc_info=True)
+            return
+
+        new_password = result["password"]
+        host_port = int(updated.get("ssh_host_port") or vps.get("ssh_host_port") or 0)
+        console_url = f"https://{YOUR_SERVER_IP}:{host_port}" if host_port else "the published Proxmox HTTPS address"
+        audit("vps_reinstall", interaction.user.id, target=container,
+              detail=f"proxmox; node={node_id}")
+        embed = success_embed("✅ Proxmox Reinstall Complete",
+                              f"`{container}` is freshly installed with its native Proxmox runtime.",
+                              thumbnail=False)
+        add_field(embed, "🐧 OS", os_name, True)
+        add_field(embed, "🌐 Node", str(node.get("name", node_id)), True)
+        add_field(embed, "🔐 Access", f"Check your DMs for the new root password and [Proxmox console]({console_url}).", False)
+        await panel.finish(final_embed=embed)
+        try:
+            owner_id = int(vps["user_id"])
+            user = bot.get_user(owner_id) or await bot.fetch_user(owner_id)
+            dm = success_embed("✅ Your Proxmox VPS Was Reinstalled",
+                               f"`{container}` has a fresh Proxmox installation. Previous data was wiped.",
+                               thumbnail=False)
+            add_field(dm, "🔐 Proxmox Credentials",
+                      credentials_block(None, new_password, container=container,
+                                        node_name=str(node.get("name", node_id)),
+                                        extra_lines=["**Realm** `Linux PAM standard authentication`"]), False)
+            add_field(dm, "🌐 Web Console", f"[Open Proxmox VE]({console_url})\n`{console_url}`", False)
+            await user.send(embed=dm)
+        except Exception as exc:
+            logger.debug("Proxmox reinstall DM failed: %s", exc)
+        self.feedback = "♻️ Proxmox reinstall finished — credentials sent by DM."
+        self._build()
+        await self.refresh_view(interaction)
+
     async def _perform_reinstall(self, interaction: discord.Interaction, node_id: int, os_version: str) -> None:
         vps = self.vps
         os_config = next((o for o in OS_OPTIONS if o.get("value") == os_version), None)
@@ -6250,6 +6343,10 @@ class ManageView(PanelView):
         )
         if not confirmed:
             await interaction.followup.send("Reinstall cancelled. Your VPS was not changed.", ephemeral=True)
+            return
+
+        if tgd_proxmox.is_image(vps.get("docker_image") or vps.get("os_version")):
+            await self._perform_proxmox_reinstall(interaction, node_id, os_version, os_name, os_emoji)
             return
 
         old_node_id = int(vps["node_id"])
@@ -6395,11 +6492,17 @@ class ReinstallOSSelectView(PanelView):
         super().__init__(author_id, timeout=300)
         self.manage_view, self.vps, self.node_id = manage_view, vps, int(node_id)
 
+    def available_images(self) -> List[Dict[str, Any]]:
+        current_is_proxmox = tgd_proxmox.is_image(
+            self.vps.get("docker_image") or self.vps.get("os_version"))
+        return [item for item in refresh_os_options()
+                if tgd_proxmox.is_image(item.get("value")) == current_is_proxmox]
+
     async def build_options(self) -> None:
         self.add_select(
             placeholder="🐧 Select operating system…",
             options=[discord.SelectOption(label=str(item["label"])[:100], value=str(item["value"]), emoji=item.get("emoji"))
-                     for item in OS_OPTIONS[:25]],
+                     for item in self.available_images()[:25]],
             callback=self._choose)
 
     async def _choose(self, interaction: discord.Interaction) -> None:
@@ -6408,7 +6511,7 @@ class ReinstallOSSelectView(PanelView):
             os_version = str(interaction.data["values"][0])
             logger.debug("Selected OS: %s", os_version)
             
-            if os_version not in {str(item.get("value")) for item in OS_OPTIONS}:
+            if os_version not in {str(item.get("value")) for item in self.available_images()}:
                 logger.warning("Invalid OS selected: %s", os_version)
                 await interaction.response.send_message(embed=error_embed("Invalid OS", "Select an OS from the menu."), ephemeral=True)
                 return
@@ -6568,13 +6671,19 @@ class PasswordView(PanelView):
                 embed=warning_embed("Nothing to Send", "No password stored — press **Regenerate** first."),
                 ephemeral=True)
             return
+        is_proxmox = tgd_proxmox.is_image(vps.get("docker_image") or vps.get("os_version"))
         forward = next((f for f in await run_blocking(get_forwards_for_container, vps["container_name"])
-                        if int(f["vps_port"]) == 22), None)
-        ssh_command = ssh_command_for(int(forward["host_port"]) if forward else None)
+                        if int(f["vps_port"]) == (tgd_proxmox.WEB_PORT if is_proxmox else 22)), None)
+        ssh_command = None if is_proxmox else ssh_command_for(int(forward["host_port"]) if forward else None)
         embed = create_embed("Your VPS Credentials", f"`{vps['container_name']}`", COLORS["vault"], thumbnail=False)
         add_field(embed, "🔐 Access", credentials_block(ssh_command, password,
                                                         container=vps["container_name"],
                                                         node_name=str(vps["node_id"])), False)
+        if is_proxmox:
+            host_port = int(forward["host_port"]) if forward else int(vps.get("ssh_host_port") or 0)
+            if host_port:
+                url = f"https://{YOUR_SERVER_IP}:{host_port}"
+                add_field(embed, "🌐 Proxmox Console", f"[Open Proxmox VE]({url})\n`{url}`", False)
         add_field(embed, "⚠️ Security", "Delete this message once you have saved the password.", False)
         try:
             await interaction.user.send(embed=embed)
@@ -6616,7 +6725,10 @@ class PortsView(PanelView):
         quota_total = get_user_allocation(vps["user_id"])
         add_field(embed, "📶 Quota", f"`{quota_used}/{quota_total}` slots used "
                                      f"{mini_meter(quota_used, max(1, quota_total), 8)}", True)
-        add_field(embed, "🔐 SSH", "Port `22` is forwarded automatically when the server starts.", True)
+        is_proxmox = tgd_proxmox.is_image(vps.get("docker_image") or vps.get("os_version"))
+        add_field(embed, "🔐 Proxmox HTTPS" if is_proxmox else "🔐 SSH",
+                  ("Port `8006` is forwarded automatically for the native web console."
+                   if is_proxmox else "Port `22` is forwarded automatically when the server starts."), True)
         return embed
 
     @discord.ui.button(label="Add forward", style=discord.ButtonStyle.primary, emoji="➕")
@@ -6626,11 +6738,13 @@ class PortsView(PanelView):
     @discord.ui.button(label="Remove", style=discord.ButtonStyle.danger, emoji="➖")
     async def remove(self, interaction: discord.Interaction, _button: discord.ui.Button) -> None:
         forwards = await run_blocking(get_forwards_for_container, self.vps["container_name"])
-        removable = [f for f in forwards if int(f["vps_port"]) != 22]
+        access_port = (tgd_proxmox.WEB_PORT if tgd_proxmox.is_image(
+            self.vps.get("docker_image") or self.vps.get("os_version")) else 22)
+        removable = [f for f in forwards if int(f["vps_port"]) != access_port]
         if not removable:
             await interaction.response.send_message(
                 embed=warning_embed("Nothing to Remove",
-                                    "Only the automatic SSH forward exists — it is managed by the bot."),
+                                    "Only the automatic access forward exists — it is managed by the bot."),
                 ephemeral=True)
             return
         options = [
@@ -7126,7 +7240,7 @@ async def manage_vps(ctx: commands.Context, user: Optional[discord.Member] = Non
 # v11: the selectable OS list is the Docker image catalogue — the built-in
 # Ubuntu / Debian / Alpine images plus every administrator-approved custom
 # image stored in the `docker_images` table.
-OS_OPTIONS: List[Dict[str, str]] = tgd_images.catalogue()
+OS_OPTIONS: List[Dict[str, Any]] = tgd_images.catalogue()
 
 
 def refresh_os_options() -> List[Dict[str, str]]:
@@ -7137,6 +7251,16 @@ def refresh_os_options() -> List[Dict[str, str]]:
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("could not refresh the image catalogue: %s", exc)
     return OS_OPTIONS
+
+
+def os_options_for(user_id: Union[int, str]) -> List[Dict[str, Any]]:
+    """Filter restricted workloads for this actor at every selection boundary."""
+    options = refresh_os_options()
+    if is_admin_id(user_id):
+        return options
+    granted = INFRA.repo.has_proxmox_grant(user_id)
+    return [item for item in options
+            if not tgd_proxmox.is_image(item.get("value")) or granted]
 
 
 class Responder:
@@ -7246,7 +7370,7 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
     # The panel mirrors the real transactional pipeline in
     # tgdbot/services/provisioning.py — every step is reported as it happens
     # and a failure rolls the whole thing back.
-    steps = list(tgd_provisioning.STEPS) + ["Deliver credentials"]
+    steps = list(tgd_provisioning.steps_for(os_version)) + ["Deliver credentials"]
     # Pass the interaction to ProgressPanel for proper deferred interaction handling
     interaction_obj = responder.target if isinstance(responder.target, discord.Interaction) else None
     logger.debug(f"provision_vps: creating ProgressPanel with interaction={interaction_obj is not None}")
@@ -7269,7 +7393,9 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
         ram_mb=int(ram_gb) * 1024, cpu=float(cpu), storage_gb=int(disk_gb),
         node_id=int(node_id), pids=int(tgd_config.DOCKER_DEFAULT_PID_LIMIT),
         expiry_days=expiry_days, is_public=bool(is_public),
-        password=password, host_motd=HOST_MOTD)
+        password=password, host_motd=HOST_MOTD,
+        requester_id=requester_id or owner.id,
+        requester_admin=is_admin_id(requester_id or owner.id))
 
     pump = PanelPump(panel, len(steps))
     pump.start()
@@ -7289,13 +7415,15 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
         ssh_port = int(result.ssh_host_port)
         node_id = int(result.node_id)
         os_version = result.image
+        is_proxmox = result.workload == tgd_config.WORKLOAD_PROXMOX
         record = await run_blocking(get_vps_by_container, container) or {}
-        record["port_forwards"] = [{"host_port": ssh_port, "vps_port": 22}]
+        record["port_forwards"] = [{"host_port": ssh_port, "vps_port": result.container_port}]
         if not record.get("id"):
             record["id"] = vps_id
 
         await panel.step(len(steps) - 1, "running")
-        await run_host_motd(container, node_id)
+        if not is_proxmox:
+            await run_host_motd(container, node_id)
         if is_public:
             await run_blocking(mark_device_vps_created, owner.id)
         if await run_blocking(get_user_allocation, owner.id) == 0:
@@ -7320,10 +7448,12 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
           detail=f"os={os_version} ram={ram_gb}GB cpu={cpu} disk={disk_gb}GB public={is_public}")
 
     # ── success: announce + DM credentials ───────────────────────────────────
-    ssh_command = ssh_command_for(ssh_port)
+    ssh_command = None if is_proxmox else ssh_command_for(ssh_port)
+    proxmox_url = result.web_console_url(YOUR_SERVER_IP) if is_proxmox else None
     token = None
-    web_pin = f"{secrets.randbelow(900000) + 100000}" if WEBSSH_DEFAULT_PIN else None
-    if WEBSSH_ENABLED:
+    web_pin = (f"{secrets.randbelow(900000) + 100000}"
+               if WEBSSH_DEFAULT_PIN and not is_proxmox else None)
+    if WEBSSH_ENABLED and not is_proxmox:
         token = issue_webssh_token(owner.id, vps=record, ttl_seconds=1800, label=container, pin=web_pin)
     web_link = _public_url_for_token(token) if token else None
 
@@ -7341,11 +7471,15 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
     add_field(success, "⏰ Lifetime", expiration_line(record), True)
     add_field(success, "🔐 Access Your Server",
               f"**Check your DMs!** 📬\n\nCredentials and connection info have been sent to you privately.\n"
-              f"Only you can see your password and SSH connection details.", False)
+              + ("Only you can see your Proxmox web-console credentials." if is_proxmox
+                 else "Only you can see your password and SSH connection details."), False)
     add_field(success, "⚡ Quick Start",
-              f"`{PREFIX}manage` — Open control panel\n"
-              f"`{PREFIX}ports add 1 <port>` — Publish a port\n"
-              f"`{PREFIX}vps renew` — Extend lifetime", False)
+              (f"`{PREFIX}manage` — Open control panel\n"
+               f"Open the Proxmox HTTPS URL in your DM\n"
+               f"`{PREFIX}vps renew` — Extend lifetime" if is_proxmox else
+               f"`{PREFIX}manage` — Open control panel\n"
+               f"`{PREFIX}ports add 1 <port>` — Publish a port\n"
+               f"`{PREFIX}vps renew` — Extend lifetime"), False)
     await panel.finish(final_embed=success)
 
     dm = create_embed("Your VPS Is Ready",
@@ -7361,8 +7495,16 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
               f"**OS:** {os_version}", False)
     add_field(dm, "🧮 Specifications",
               f"**RAM:** `{ram_gb} GB` | **CPU:** `{cpu}` vCore | **Storage:** `{disk_gb} GB`", False)
-    add_field(dm, "🔐 SSH Credentials",
-              credentials_block(ssh_command, password, container=container, node_name=node["name"]), False)
+    if is_proxmox:
+        add_field(dm, "🔐 Proxmox VE Credentials",
+                  credentials_block(None, password, container=container, node_name=node["name"],
+                                    extra_lines=["**Realm** `Linux PAM standard authentication`"]), False)
+        add_field(dm, "🌐 Proxmox Web Console",
+                  f"[**→ Open Proxmox VE**]({proxmox_url})\n`{proxmox_url}`\n"
+                  "The first connection uses Proxmox's self-signed HTTPS certificate.", False)
+    else:
+        add_field(dm, "🔐 SSH Credentials",
+                  credentials_block(ssh_command, password, container=container, node_name=node["name"]), False)
     if web_link:
         pin_text = f"\n🔒 PIN: `{web_pin}` (asked once per browser)" if web_pin else ""
         add_field(dm, "🌐 Browser Terminal (Web SSH)", f"[**→ Open Terminal Now**]({web_link}){pin_text}", False)
@@ -7518,7 +7660,7 @@ class OSSelectView(PanelView):
             placeholder="Pick an OS image…",
             options=[
                 discord.SelectOption(label=image["label"], value=image["value"], emoji=image.get("emoji"))
-                for image in OS_OPTIONS
+                for image in os_options_for(self.author_id)[:25]
             ],
             callback=self._choose,
         )
@@ -7535,6 +7677,12 @@ class OSSelectView(PanelView):
                 return
             os_version = str(values[0])
             logger.debug(f"Selected OS: {os_version}")
+            allowed = {str(item.get("value")) for item in os_options_for(interaction.user.id)}
+            if os_version not in allowed:
+                await interaction.response.send_message(
+                    embed=error_embed("OS Not Allowed", "You do not have access to that OS image."),
+                    ephemeral=True)
+                return
         except (KeyError, TypeError, IndexError) as e:
             logger.error("Error extracting OS version: %s", e)
             await interaction.response.send_message(
@@ -7563,12 +7711,15 @@ class OSSelectView(PanelView):
         except Exception as e:
             logger.warning(f"Could not send acknowledgment: {e}")
         
-        logger.info(f"Starting VPS provisioning: os={os_version}, ram={self.ram_gb}GB, cpu={self.cpu}, disk={self.disk_gb}GB, node={self.node_id}")
-        
+        proxmox_selected = tgd_proxmox.is_image(os_version)
+        ram_gb = max(self.ram_gb, tgd_proxmox.MIN_RAM_MB // 1024) if proxmox_selected else self.ram_gb
+        disk_gb = max(self.disk_gb, tgd_proxmox.MIN_STORAGE_GB) if proxmox_selected else self.disk_gb
+        logger.info(f"Starting VPS provisioning: os={os_version}, ram={ram_gb}GB, cpu={self.cpu}, disk={disk_gb}GB, node={self.node_id}")
+
         try:
             record = await provision_vps(
                 responder=responder, owner=self.owner, node_id=self.node_id, os_version=os_version,
-                ram_gb=self.ram_gb, cpu=self.cpu, disk_gb=self.disk_gb, expiry_days=self.days,
+                ram_gb=ram_gb, cpu=self.cpu, disk_gb=disk_gb, expiry_days=self.days,
                 is_public=False, guild=interaction.guild, requester_id=interaction.user.id,
             )
             logger.debug(f"provision_vps returned: {record is not None}")
@@ -7852,7 +8003,7 @@ class PublicOSSelectView(PanelView):
         # Use the exact aliases accepted by provision_container().
         # SUPPORTED_OS_OPTIONS is used for legacy display labels and contains
         # aliases that do not all match the images configured for provisioning.
-        for image in OS_OPTIONS[:25]:
+        for image in os_options_for(self.author_id)[:25]:
             value = str(image.get("value") or "")
             if not value:
                 continue
@@ -7883,7 +8034,8 @@ class PublicOSSelectView(PanelView):
         logger.debug(f"PublicOSSelectView._choose called by {interaction.user.id} for node {self.node_id}")
         values = (interaction.data or {}).get("values") or []
         os_version = str(values[0]) if values else ""
-        allowed_images = {str(item.get("value")) for item in OS_OPTIONS if item.get("value")}
+        allowed_images = {str(item.get("value"))
+                          for item in os_options_for(interaction.user.id) if item.get("value")}
         if os_version not in allowed_images:
             logger.warning(f"Invalid OS selected: {os_version}")
             await interaction.response.send_message(
@@ -7919,17 +8071,20 @@ class PublicOSSelectView(PanelView):
         except Exception as e:
             logger.warning(f"Could not send acknowledgment: {e}")
         
-        logger.info(f"Starting VPS provisioning: os={os_version}, ram={PUBLIC_VPS_MAX_RAM}GB, cpu={PUBLIC_VPS_MAX_CPU}, disk={PUBLIC_VPS_MAX_DISK}GB, node={self.node_id}")
-        
+        proxmox_selected = tgd_proxmox.is_image(os_version)
+        ram_gb = max(PUBLIC_VPS_MAX_RAM, tgd_proxmox.MIN_RAM_MB // 1024) if proxmox_selected else PUBLIC_VPS_MAX_RAM
+        disk_gb = max(PUBLIC_VPS_MAX_DISK, tgd_proxmox.MIN_STORAGE_GB) if proxmox_selected else PUBLIC_VPS_MAX_DISK
+        logger.info(f"Starting VPS provisioning: os={os_version}, ram={ram_gb}GB, cpu={PUBLIC_VPS_MAX_CPU}, disk={disk_gb}GB, node={self.node_id}")
+
         try:
             record = await provision_vps(
                 responder=responder,
                 owner=self.owner,
                 node_id=self.node_id,
                 os_version=os_version,
-                ram_gb=PUBLIC_VPS_MAX_RAM,
+                ram_gb=ram_gb,
                 cpu=PUBLIC_VPS_MAX_CPU,
-                disk_gb=PUBLIC_VPS_MAX_DISK,
+                disk_gb=disk_gb,
                 expiry_days=PUBLIC_VPS_EXPIRY_DAYS,
                 is_public=True,
                 guild=self.guild,
@@ -10063,6 +10218,80 @@ async def ports_revoke(ctx: commands.Context, forward_id: int) -> None:
 
 # ── Docker platform administration ───────────────────────────────────────────
 #
+# Proxmox is a privileged, separately gated workload. Admins have implicit
+# access; these grants apply only to non-admin Discord user IDs.
+
+@bot.hybrid_group(name="proxmox", invoke_without_command=True)
+@is_admin()
+async def proxmox_command(ctx: commands.Context) -> None:
+    """Manage per-user Proxmox access grants."""
+    await ctx.send(embed=info_embed(
+        "Proxmox Access",
+        "`/proxmox give userid` — allow a user to create Proxmox VPS\n"
+        "`/proxmox remove userid` — revoke that grant\n"
+        "`/proxmox list` — show granted user IDs\n\n"
+        "Admins always have access. Revoking a grant does not delete an existing VPS."))
+
+
+def _proxmox_userid(raw: str) -> Optional[str]:
+    value = str(raw or "").strip()
+    return value if re.fullmatch(r"\d{15,25}", value) else None
+
+
+@proxmox_command.command(name="give")
+@app_commands.describe(userid="Discord user ID to grant Proxmox access")
+@is_admin()
+@with_typing
+async def proxmox_give(ctx: commands.Context, userid: str) -> None:
+    """Grant a Discord user ID permission to create Proxmox VPS."""
+    target = _proxmox_userid(userid)
+    if not target:
+        await ctx.send(embed=error_embed("Invalid User ID", "Paste a numeric Discord user ID (15–25 digits)."))
+        return
+    await INFRA.grant_proxmox(target, granted_by=ctx.author.id)
+    audit("proxmox_grant", ctx.author.id, target=target)
+    suffix = " (admins already have implicit access)" if is_admin_id(target) else ""
+    await ctx.send(embed=success_embed(
+        "Proxmox Access Granted",
+        f"User ID `{target}` can now select and create Proxmox VPS{suffix}.\n"
+        f"Minimum plan: **{tgd_proxmox.MIN_RAM_MB // 1024} GB RAM** and "
+        f"**{tgd_proxmox.MIN_STORAGE_GB} GB disk**."))
+
+
+@proxmox_command.command(name="remove")
+@app_commands.describe(userid="Discord user ID whose Proxmox grant will be removed")
+@is_admin()
+@with_typing
+async def proxmox_remove(ctx: commands.Context, userid: str) -> None:
+    """Revoke a Discord user ID's Proxmox creation grant."""
+    target = _proxmox_userid(userid)
+    if not target:
+        await ctx.send(embed=error_embed("Invalid User ID", "Paste a numeric Discord user ID (15–25 digits)."))
+        return
+    removed = await INFRA.revoke_proxmox(target)
+    audit("proxmox_revoke", ctx.author.id, target=target, detail=f"removed={removed}")
+    if is_admin_id(target):
+        note = "\nThat user is an admin, so their implicit administrator access remains."
+    elif removed:
+        note = "\nExisting VPS are not deleted; new Proxmox creation is blocked."
+    else:
+        note = "\nNo grant existed for that user ID."
+    await ctx.send(embed=success_embed("Proxmox Access Updated", f"User ID: `{target}`{note}"))
+
+
+@proxmox_command.command(name="list")
+@is_admin()
+@with_typing
+async def proxmox_list(ctx: commands.Context) -> None:
+    """List non-admin Proxmox grants (admins are implicit)."""
+    rows = await INFRA.list_proxmox_grants()
+    lines = [f"`{row['user_id']}` — granted by `{row.get('granted_by') or '?'}`"
+             for row in rows]
+    await ctx.send(embed=create_embed(
+        "Proxmox Access Grants", "\n".join(lines)[:4000] if lines else
+        "No explicit grants. Administrators still have implicit access.", COLORS["info"]))
+
+
 # These commands expose the infrastructure that replaced LXD: the approved image
 # catalogue, per-node quota support, port reservation history, volume backups and
 # the security policy every customer container is created with.
@@ -10073,7 +10302,7 @@ async def ports_revoke(ctx: commands.Context, forward_id: int) -> None:
 @command_timeout(COMMAND_TIMEOUT_SECONDS)
 async def images_cmd(ctx: commands.Context) -> None:
     """List the OS images users may provision."""
-    catalogue = await INFRA.image_options()
+    catalogue = await INFRA.image_options(user_id=ctx.author.id, is_admin=True)
     embed = create_embed("🖼️ Available Images",
                          f"{len(catalogue)} image(s) approved for provisioning.",
                          COLORS["magic"])
@@ -10091,7 +10320,8 @@ async def images_cmd(ctx: commands.Context) -> None:
 async def image_add(ctx: commands.Context, reference: str, *, label: str = "") -> None:
     """Approve a custom image for provisioning (and pull it to the local node)."""
     try:
-        entry = await INFRA.add_image(reference, label=label)
+        entry = await INFRA.add_image(reference, label=label, added_by=ctx.author.id)
+        await run_blocking(refresh_os_options)
     except Exception as exc:
         await ctx.send(embed=error_embed("Image Rejected", f"`{reference}`\n```\n{truncate_text(exc, 400)}\n```"))
         return
@@ -10112,6 +10342,7 @@ async def image_remove(ctx: commands.Context, *, reference: str) -> None:
     if not ok:
         await ctx.send(embed=error_embed("Not Found", f"`{reference}` is not an approved image."))
         return
+    await run_blocking(refresh_os_options)
     audit("docker_image_remove", ctx.author.id, target=reference)
     await ctx.send(embed=success_embed("Image Removed",
                                        f"`{reference}` can no longer be selected.\n"

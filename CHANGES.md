@@ -1,3 +1,33 @@
+# v12 — Proxmox grants and functional custom images
+
+- Added a separately gated Proxmox VE workload using the pinned community
+  `dockurr/proxmox:9.2.20` image. Admins have implicit access; non-admins require
+  a persisted grant managed by `/proxmox give`, `/proxmox remove`, and
+  `/proxmox list` (with prefix equivalents).
+- Enforced authorization in both Discord selectors and the provisioning service.
+  Unknown images and alternate Proxmox references cannot be injected through a
+  crafted callback or direct service request.
+- Proxmox preserves its native systemd entrypoint and stop signal, uses
+  privileged mode only for that workload, publishes port 8006, verifies the
+  HTTPS console, and persists both `/var/lib/vz` and `/var/lib/pve-cluster`.
+  Ordinary VPS remain on the existing unprivileged SSH pipeline.
+- Proxmox credentials use a one-way SHA-512 `PASSWORD_HASH`, never plaintext
+  `PASSWORD` in Docker metadata. Credential DMs and the management console link
+  use the native HTTPS UI rather than SSH/WebSSH.
+- Recreate/resize/reinstall/delete understand the Proxmox contract. Incomplete
+  one-volume backups/restores, cloning, migration and workload conversions are
+  explicitly rejected instead of silently losing data or changing privileges.
+- Fixed `/image-add`: it now returns the expected catalogue entry, pulls and
+  validates a Linux image, records the approving admin, and refreshes the
+  creation selectors. `/image-remove` refreshes them too. Both remain admin-only.
+- Schema v12 adds only `proxmox_grants`; existing users, VPS, ports, backups and
+  settings are preserved. The live command tree has 89 top-level commands plus
+  the three Proxmox subcommands.
+
+The historical v10 → v11 record below is retained unchanged.
+
+---
+
 # v10 → v11 Change Record
 
 What was preserved, what changed, and what could not be verified.
