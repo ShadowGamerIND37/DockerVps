@@ -13,8 +13,8 @@ import pytest
 
 from tgdbot import config
 from tgdbot.database import models
-from tgdbot.docker_backend import volumes
-from tgdbot.errors import ProvisioningError
+from tgdbot.docker_backend import resources, volumes
+from tgdbot.errors import ProvisioningError, QuotaSupportReport
 from tgdbot.services import provisioning
 
 
@@ -78,6 +78,13 @@ def test_database_row_is_written_with_docker_metadata(repo, ready):
     # persistence is the Platform's job (see test_platform_stores_the_password).
     assert row["root_password"] in (None, "")
     assert result.password
+
+
+def test_public_visibility_is_written_to_the_database(repo, ready):
+    provisioning.provision(repo, make_request(is_public=True))
+    row = repo.get_vps_by_container("alice-vps-1")
+    assert row is not None
+    assert int(row["is_public"]) == 1
 
 
 def test_port_ledger_records_the_ssh_reservation(repo, ready):
@@ -154,6 +161,53 @@ def test_failure_reports_what_was_cleaned_up(repo, ready, engine):
     with pytest.raises(ProvisioningError) as excinfo:
         provisioning.provision(repo, make_request())
     assert excinfo.value.cleanup, "the error did not say what was rolled back"
+
+
+def test_quota_failure_has_the_correct_step_and_rolls_back(repo, ready, engine, monkeypatch):
+    def fail_quota(_self, _container, _storage_gb):
+        raise RuntimeError("quota backend unavailable")
+
+    monkeypatch.setattr(provisioning.Provisioner, "_apply_quota", fail_quota)
+    with pytest.raises(ProvisioningError) as excinfo:
+        provisioning.provision(repo, make_request())
+
+    assert "step 17 (Apply the storage quota)" in str(excinfo.value)
+    assert "quota backend unavailable" in str(excinfo.value)
+    assert "alice-vps-1" not in engine.containers
+    assert repo.active_ports_for_container("alice-vps-1") == []
+
+
+def test_database_failure_releases_enforced_quota_before_volume(repo, ready, engine, monkeypatch):
+    support = QuotaSupportReport(True, "xfs-project-quota", "xfs", "test quota")
+    monkeypatch.setattr(resources, "detect_quota_support", lambda *_args, **_kwargs: support)
+    monkeypatch.setattr(resources, "apply_quota",
+                        lambda *_args, **_kwargs: (True, "test quota applied"))
+    releases = []
+
+    def release(mountpoint, method, project_id):
+        releases.append((mountpoint, method, project_id))
+        return True, "released"
+
+    def fail_insert(_record):
+        raise RuntimeError("database registration failed")
+
+    monkeypatch.setattr(resources, "release_quota", release)
+    monkeypatch.setattr(repo, "insert_vps", fail_insert)
+
+    with pytest.raises(ProvisioningError) as excinfo:
+        provisioning.provision(repo, make_request())
+
+    assert "step 18 (Register in the database)" in str(excinfo.value)
+    assert len(releases) == 1
+    assert releases[0][0]
+    assert releases[0][1] == "xfs-project-quota"
+    assert releases[0][2] > 0
+    assert "alice-vps-1" not in engine.containers
+    assert f"{config.DOCKER_VOLUME_PREFIX}alice-vps-1" not in engine.volumes
+    assert repo.get_quota("alice-vps-1") is None
+    assert repo.get_vps_by_container("alice-vps-1") is None
+    assert repo.active_ports_for_container("alice-vps-1") == []
+    assert "host storage quota released" in excinfo.value.cleanup
 
 
 def test_a_second_vps_still_provisions_after_a_rollback(repo, ready, engine):
