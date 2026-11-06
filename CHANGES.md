@@ -1,3 +1,21 @@
+# Public Proxmox console addresses
+
+- Proxmox gateway links now inherit `YOUR_SERVER_IP` by default instead of
+  advertising `127.0.0.1`. Set that value to a real public IP or DNS name, or
+  override only the console address with `PROXMOX_CONSOLE_PUBLIC_HOST`.
+- The gateway listener now defaults to `0.0.0.0`, so a remote browser can reach
+  it when the host/cloud firewall (and NAT, where applicable) permits TCP 5001.
+  The server-side Proxmox upstream remains loopback-only and is never placed in
+  the browser URL.
+- Documented direct public-IP and HTTPS reverse-proxy deployments, including
+  DNS, firewall, WebSocket and restart requirements. The bot does not allocate
+  public IPs, create DNS records or provision TLS certificates.
+- Ordinary WebSSH example configuration now also inherits `YOUR_SERVER_IP`
+  instead of forcing a loopback address. Added public-domain and clean-process
+  configuration regressions.
+
+---
+
 # Proxmox native browser console gateway
 
 - Added a separate `aiohttp` service for Proxmox VE only. It reverse-proxies the

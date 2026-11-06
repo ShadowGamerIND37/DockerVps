@@ -1,9 +1,10 @@
-"""Local, token-protected gateway for the native Proxmox VE web console.
+"""Token-protected gateway for the native Proxmox VE web console.
 
 This is deliberately a reverse proxy, not a second Proxmox UI.  Proxmox already
 provides the management UI, API, noVNC client and guest boot menus.  Keeping its
 application at the root of this service preserves those paths while the gateway
-adds short-lived console links and a loopback-only upstream default.
+adds short-lived console links and a loopback-only upstream default. The
+browser-facing listener and advertised host are independently configurable.
 
 The browser never receives a Proxmox password.  It logs in to Proxmox directly;
 the gateway only holds an expiring, random session cookie and forwards Proxmox's
@@ -39,11 +40,12 @@ _SKIP_RESPONSE = _HOP_BY_HOP | {"set-cookie"}
 
 @dataclass
 class ConsoleSettings:
-    """Runtime settings for the local Proxmox console service."""
+    """Runtime settings for the Proxmox console service."""
 
-    host: str = "127.0.0.1"
+    host: str = "0.0.0.0"
     port: int = 5001
-    public_host: str = "127.0.0.1"
+    #: Defaults to the configured public server address; never the upstream.
+    public_host: str = config.PROXMOX_CONSOLE_PUBLIC_HOST
     url_format: str = "http://{SERVER_IP}:{PORT}"
     upstream_host: str = "127.0.0.1"
     upstream_scheme: str = "https"
