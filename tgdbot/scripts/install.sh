@@ -82,10 +82,22 @@ fi
 
 # ── 6. directories ───────────────────────────────────────────────────────────
 step "6/12  Directories"
-VPS_DATA_DIR="${DOCKER_VPS_DATA_DIR:-/var/lib/tgdbot/vps}"
-BACKUP_DIR="${DOCKER_BACKUP_DIR:-/var/backups/tgdbot}"
-RUNTIME_DIR="${DOCKER_RUNTIME_DIR:-/var/lib/tgdbot/runtime}"
-SECRET_DIR="${DOCKER_SECRET_DIR:-/var/lib/tgdbot/secrets}"
+# Read only the four path keys from .env. Never source it: values such as
+# HOST_MOTD are shell-looking data, not installer code. Explicit shell values
+# retain precedence, and legacy /var/lib/unixnodes paths are preserved.
+configured_path() {
+  local key="$1" fallback="$2" current="${!1:-}"
+  if [[ -n "$current" ]]; then
+    printf '%s\n' "$current"
+  else
+    "$VENV_DIR/bin/python" "$APP_DIR/tgdbot/scripts/env_value.py" \
+      --env-file "$APP_DIR/.env" --key "$key" --default "$fallback"
+  fi
+}
+VPS_DATA_DIR="$(configured_path DOCKER_VPS_DATA_DIR /var/lib/tgdbot/vps)"
+BACKUP_DIR="$(configured_path DOCKER_BACKUP_DIR /var/backups/tgdbot)"
+RUNTIME_DIR="$(configured_path DOCKER_RUNTIME_DIR /var/lib/tgdbot/runtime)"
+SECRET_DIR="$(configured_path DOCKER_SECRET_DIR /var/lib/tgdbot/secrets)"
 for directory in "$VPS_DATA_DIR" "$BACKUP_DIR" "$RUNTIME_DIR" "$SECRET_DIR" \
                  "$APP_DIR/logs" "$APP_DIR/backups" "$APP_DIR/migration_reports"; do
   mkdir -p "$directory"

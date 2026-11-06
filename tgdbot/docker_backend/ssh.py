@@ -232,27 +232,46 @@ SSHD_CONFIG_TEMPLATE_OK = "SSHD_CONFIG written"
 
 # ── host side asset management ──────────────────────────────────────────────
 
+def _runtime_permission_error(exc: PermissionError) -> PermissionError:
+    """Add a safe, actionable remedy without changing the configured paths."""
+    path = getattr(exc, "filename", None) or str(config.DOCKER_RUNTIME_DIR)
+    message = (
+        "Docker host directories are not writable by the bot service user. "
+        "Run `sudo bash tgdbot/scripts/install.sh` from the project directory "
+        "to create and chown the paths configured in .env, or create and chown "
+        "those directories manually. No directory was moved or removed."
+    )
+    return PermissionError(getattr(exc, "errno", None) or 13, message, path)
+
+
 def ensure_runtime_assets() -> Dict[str, str]:
     """
     Create the host directories and write the supervisor script.
 
     Returns ``{"init_script": <host path>, "secret_dir": …, "data_dir": …}``.
+    Existing paths are never silently replaced with a fallback: doing so could
+    hide existing VPS data or credentials after an upgrade.
     """
-    for directory in (config.DOCKER_RUNTIME_DIR, config.DOCKER_SECRET_DIR,
-                      config.DOCKER_VPS_DATA_DIR, config.DOCKER_BACKUP_DIR):
-        directory.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(directory, 0o700)
-        except OSError:
-            pass
+    try:
+        for directory in (config.DOCKER_RUNTIME_DIR, config.DOCKER_SECRET_DIR,
+                          config.DOCKER_VPS_DATA_DIR, config.DOCKER_BACKUP_DIR):
+            directory.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(directory, 0o700)
+            except OSError:
+                pass
+            if not os.access(directory, os.W_OK):
+                raise PermissionError(13, "Directory is not writable", str(directory))
 
-    init_path = config.DOCKER_RUNTIME_DIR / INIT_FILENAME
-    rendered = INIT_SCRIPT.replace("__SSH_PORT__", str(int(config.SSH_CONTAINER_PORT)))
-    current = init_path.read_text() if init_path.exists() else ""
-    if current != rendered:
-        init_path.write_text(rendered, encoding="utf-8")
-        logger.info("wrote container supervisor script to %s", init_path)
-    os.chmod(init_path, 0o755)
+        init_path = config.DOCKER_RUNTIME_DIR / INIT_FILENAME
+        rendered = INIT_SCRIPT.replace("__SSH_PORT__", str(int(config.SSH_CONTAINER_PORT)))
+        current = init_path.read_text() if init_path.exists() else ""
+        if current != rendered:
+            init_path.write_text(rendered, encoding="utf-8")
+            logger.info("wrote container supervisor script to %s", init_path)
+        os.chmod(init_path, 0o755)
+    except PermissionError as exc:
+        raise _runtime_permission_error(exc) from exc
     return {
         "init_script": str(init_path),
         "secret_dir": str(config.DOCKER_SECRET_DIR),

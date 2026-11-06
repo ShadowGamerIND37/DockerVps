@@ -83,7 +83,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 | `tgdbot/services/` | Provisioning, lifecycle, backups, expiration, nodes |
 | `tgdbot/web/terminal.py` | Web SSH terminal |
 | `tgdbot/scripts/` | Installer, migration, healthcheck, acceptance test |
-| `tests/` | 135 tests + a fake Docker client |
+| `tests/` | 138 tests + a fake Docker client |
 
 **Capability**
 
@@ -92,7 +92,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 - Volume backups with checksum verification and retention
 - Per-node quota support reporting
 - Orphan detection without automatic deletion
-- 135 unit tests that run with no Docker daemon
+- 138 unit tests that run with no Docker daemon
 
 ---
 
@@ -187,6 +187,12 @@ Writing tests surfaced real defects, not just test errors:
     to `vps_data.db`), so fresh provisioning failed with `no such table: vps`.
     Both now use the same configured path; the default remains the v10
     `vps.db`, and an explicit `DATABASE_PATH` is honored.
+13. **Runtime directories could be unwritable after the rebrand.** Existing
+    `.env` files may still name `/var/lib/unixnodes`, while the installer only
+    created its new default paths. The installer now reads the four configured
+    directory values without sourcing `.env` and chowns exactly those paths.
+    Runtime asset setup checks writability and reports the remediation instead
+    of silently moving customer data to a fallback directory.
 
 `tests/test_static_integrity.py` now fails the build on either failure mode:
 
@@ -264,7 +270,7 @@ above rather than exposing it:
 ## Test results
 
 ```
-135 passed
+138 passed
 ```
 
 | File | Tests | Covers |
@@ -272,6 +278,8 @@ above rather than exposing it:
 | `test_security_policy.py` | 24 | capability drop, privileged/socket/namespace refusal, name and image validation |
 | `test_migrations.py` | 13 | idempotency, backup integrity, rollback note, base-schema drift, fresh bootstrap |
 | `test_database_bootstrap.py` | 1 | fresh configured DB is migrated before the provisioning repository reads it |
+| `test_env_value.py` | 2 | safe .env path parsing, legacy paths, shell precedence, no shell execution |
+| `test_runtime_assets.py` | 1 | unwritable host directory diagnostics and remediation |
 | `test_ports.py` | 21 | reservation, conflicts, ranges, TCP/UDP, release, history, summary |
 | `test_creation_views.py` | 1 | guided modal node options and node → OS select handoff |
 | `test_slash_commands.py` | 4 | 88 prefix/slash names, payload serialization, variadic-argument options, context menu |

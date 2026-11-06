@@ -79,6 +79,27 @@ v10 database. Do not delete either file as part of this fix.
 
 ---
 
+## Host directory permissions after the rebrand
+
+An existing `.env` may still configure `/var/lib/unixnodes/runtime`,
+`/var/lib/unixnodes/secrets`, or other pre-rebrand directories. Those paths are
+**preserved**, not silently redirected, so existing runtime assets and customer
+data remain visible.
+
+If the service user cannot write them, run:
+
+```bash
+sudo bash tgdbot/scripts/install.sh
+```
+
+The installer reads only the directory settings from `.env` using a
+non-executing parser, then creates and chowns those exact paths. It never
+sources `.env` (the `HOST_MOTD` value is data, not shell code), and it does not
+run destructive Docker cleanup. If you configure paths manually, create them
+and give the bot's service user write access before restarting.
+
+---
+
 ## Upgrading
 
 ```bash
