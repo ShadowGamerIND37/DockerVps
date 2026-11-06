@@ -1,3 +1,17 @@
+# Menu-driven installer and automatic updates
+
+- Added root `installer.sh` with three options: install/run, database migration,
+  and Auto Updater management.
+- Installation prompts for the Discord token, `MAIN_ADMIN_ID` and `OWNER_IDS`;
+  Enter preserves the corresponding `.env` value, and token input is not echoed.
+- Auto Updater supports run-now, hourly systemd timer enable/disable, dependency
+  installation, migration and service restart. It uses fast-forward-only Git
+  updates and refuses to touch a dirty worktree.
+- Added black-box shell tests using temporary directories and mocked installer,
+  Git, Python and systemd commands; no host services are changed by the tests.
+
+---
+
 # Cloudflare quick tunnels for Proxmox VPS
 
 - Proxmox management panels now include a **Cloudflare** action. It installs
