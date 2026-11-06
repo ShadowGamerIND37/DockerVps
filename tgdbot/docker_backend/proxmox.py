@@ -182,8 +182,14 @@ def remove_cluster_volume(client: Any, container_name: str) -> bool:
 
 def build_container_spec(*, container_name: str, image_ref: str, password_hash_value: Optional[str],
                          ram_mb: int, cpu: float, pids: int, publish_ip: str,
-                         published_ports: Any, labels: Dict[str, str]) -> Dict[str, Any]:
+                         published_ports: Any, labels: Dict[str, str],
+                         kvm_enabled: bool = True,
+                         apparmor_enabled: bool = False) -> Dict[str, Any]:
     """Build only the Proxmox spec; ordinary VPS never inherit these overrides."""
+    if not kvm_enabled:
+        raise ContainerError(
+            "The supported Proxmox runtime requires KVM; refusing a "
+            "KVM-disabled privileged container.")
     environment = {
         "REQUIRE_KVM": "Y" if config.PROXMOX_REQUIRE_KVM else "N",
         "REQUIRE_FUSE": "Y" if config.PROXMOX_REQUIRE_FUSE else "N",
@@ -198,13 +204,18 @@ def build_container_spec(*, container_name: str, image_ref: str, password_hash_v
         published_ports=published_ports, labels={
             **labels, config.LABEL_WORKLOAD: config.WORKLOAD_PROXMOX,
         }, ram_mb=ram_mb, cpu=cpu, pids=effective_pids(pids),
+        kvm_enabled=kvm_enabled, apparmor_enabled=apparmor_enabled,
     )
     spec["environment"] = environment
+    # Keep the specialized runtime's historical seccomp/no-new-privileges
+    # behaviour, but retain the explicit AppArmor choice resolved for this VPS.
+    spec["security_opt"] = [
+        option for option in (spec.get("security_opt") or [])
+        if str(option).lower().startswith("apparmor=")
+    ]
     spec.update({
         "privileged": True,
         "cap_drop": [],
-        "security_opt": [],
-        "devices": [],
         "sysctls": {},
         "init": False,
         "stop_signal": "SIGRTMIN+3",

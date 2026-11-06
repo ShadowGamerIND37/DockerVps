@@ -4,9 +4,10 @@ A Discord bot that hands out real Linux VPS instances backed by **Docker Engine*
 Users create a VPS from Discord, get a root password and an SSH port, and log in
 over real SSH with `apt`/`apk`, cron, SFTP and a persistent disk.
 
-This is **v11**. Version 10 ran the same bot on LXC/LXD; v11 replaces the LXD
-backend with Docker Engine and keeps every Discord command, panel, animation and
-database row intact. See [MIGRATION.md](MIGRATION.md) for the upgrade path.
+This is the Docker backend (currently **schema v13**). Version 10 ran the same
+bot on LXC/LXD; the Docker releases replace the LXC backend while preserving the
+Discord commands, panels, animations and database rows. See
+[MIGRATION.md](MIGRATION.md) for the upgrade path.
 
 ---
 
@@ -22,7 +23,7 @@ database row intact. See [MIGRATION.md](MIGRATION.md) for the upgrade path.
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (158 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (189 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -145,11 +146,21 @@ Every customer container is created with:
 | Privileged mode | off by default (`DOCKER_PRIVILEGED=false`); enabling it logs a loud warning |
 | Capabilities | dropped (`DEFAULT_CAP_DROP`), keeping the 10 required by package management, PAM and OpenSSH |
 | Docker socket | **never** mounted into a customer container |
-| Host devices / namespaces | **never** shared (no `pid=host`, `net=host`, `/dev` mounts) |
+| Host devices / namespaces | never shared implicitly; the sole device exception is an admin-selected `/dev/kvm` mapping |
+| KVM | admin choice at creation; disabled means no `/dev/kvm` mapping, enabled maps `/dev/kvm:/dev/kvm` |
+| AppArmor | admin choice at creation; enabled uses the configured profile or `docker-default`, disabled uses `apparmor=unconfined` |
 | Memory swap | disabled — `memswap_limit == mem_limit` |
 | PID limit | enforced, to stop fork bombs taking the node down |
 | `no-new-privileges` | **off, deliberately** — it breaks `su`/`sudo` and PAM root login |
 | Root password | encrypted at rest, consumed by `chpasswd`, then truncated on disk |
+
+The guided admin `/create` flow asks for KVM and AppArmor after OS selection.
+Regular users never receive these controls and cannot submit overrides through
+another creation path; the provisioning service rejects such requests. Ordinary
+VPS defaults are KVM disabled and AppArmor enabled. The resolved booleans are
+stored in schema v13 and reused by recreate, reinstall, clone and migration.
+KVM-disabled creation is refused if privileged Docker mode would expose host
+devices implicitly.
 
 The root password is **never** written to an environment variable, container
 label, `docker inspect` metadata or a log line. It is handed to the container
@@ -193,13 +204,18 @@ not delete or lock an existing VPS.
 
 **Security boundary:** the Proxmox image requires privileged Docker mode. A grant
 therefore authorizes that user to create this privileged workload on the selected
-node. Use Proxmox only on a trusted, preferably dedicated node. Ordinary and
-public non-Proxmox VPS retain the existing unprivileged capability policy; the
-Proxmox profile never applies to them.
+node, but does **not** authorize changing KVM or AppArmor. Granted non-admins use
+the fixed Proxmox policy (KVM enabled, AppArmor disabled); only admins can select
+security overrides. Use Proxmox only on a trusted, preferably dedicated node.
+Ordinary and public non-Proxmox VPS retain the existing unprivileged capability
+policy; the Proxmox profile never applies to them.
 
 ### Host and runtime requirements
 
 - Linux Docker node with hardware virtualization and `/dev/kvm`, plus `/dev/fuse`.
+  Proxmox receives an explicit `/dev/kvm:/dev/kvm` mapping. KVM-disabled Proxmox
+  creation is rejected because the supported privileged runtime cannot provide
+  a safe no-KVM guarantee.
 - At least **2 GB RAM and 32 GB storage** per Proxmox VPS. The public creation
   flow raises its normal disk minimum to 32 GB only after an authorized Proxmox
   selection.
@@ -281,7 +297,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**177 tests: 176 passed, 1 skipped.** They cover the security policy, port
+**189 tests: 188 passed, 1 skipped.** They cover the security policy, port
 allocation, schema migration, SSH verification retries and diagnostics, the
 provisioning transaction and rollback, the web terminal's credential handling,
 and backward compatibility across the UnixNodes → TGD Bot rebrand. They run
@@ -333,8 +349,10 @@ aliases remain available. The existing `/manage`, `/myvps`, `/ping`,
 `/dashboard`, and `/help` interfaces are unchanged.
 
 Use `/create` with no options for the guided form. After submitting it, choose a
-node and then an OS from the populated dropdowns. Admins can still supply the
-creation options directly.
+node, an OS, and then the admin-only KVM/AppArmor settings from the populated
+controls. Admins can still supply the plan options directly; the security step
+remains part of admin creation. Public self-service creation uses fixed policy
+defaults and never shows these controls.
 
 Most slash options map one-to-one to their prefix arguments. Two commands accept
 a single optional string for the remaining arguments because Discord does not

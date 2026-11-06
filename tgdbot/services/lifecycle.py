@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from .. import config
 from ..docker_backend import containers as ctr
 from ..docker_backend import images as images_mod
-from ..docker_backend import monitoring, nodes as nodes_mod, proxmox, resources, ssh, volumes
+from ..docker_backend import monitoring, nodes as nodes_mod, proxmox, resources, security, ssh, volumes
 from ..docker_backend.ports import PURPOSE_USER, PortAllocator
 from ..errors import ContainerError, ContainerNotFound, TgdBotError
 from ..database import models
@@ -286,6 +286,17 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
             "their privilege and storage contracts are incompatible.",
             user_message="Create a new VPS to change between a regular OS and Proxmox.",
         )
+    workload = config.WORKLOAD_PROXMOX if requested_is_proxmox else config.WORKLOAD_VPS
+    kvm_enabled, apparmor_enabled = security.security_from_record(vps, workload)
+    if requested_is_proxmox and not kvm_enabled:
+        raise ContainerError(
+            "The supported Proxmox runtime requires KVM; refusing to recreate "
+            "a KVM-disabled privileged container.")
+    if not kvm_enabled and config.DOCKER_PRIVILEGED:
+        raise ContainerError(
+            "KVM-disabled VPS recreation is incompatible with privileged Docker mode.")
+    # Validate an enabled profile before stopping or removing the old guest.
+    security.apparmor_security_opt(apparmor_enabled)
     ram = int(ram_mb or _ram_mb(vps))
     cores = float(cpu if cpu is not None else _cpu(vps))
     limit_pids = int(pids or vps.get("pid_limit") or config.DOCKER_DEFAULT_PID_LIMIT)
@@ -366,7 +377,8 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
             password_hash_value=(proxmox.password_hash(password)
                                  if wipe_volume and password else None),
             ram_mb=ram, cpu=cores, pids=limit_pids, publish_ip=allocator.publish_ip,
-            published_ports=allocator.publish_spec(container), labels=container_labels)
+            published_ports=allocator.publish_spec(container), labels=container_labels,
+            kvm_enabled=kvm_enabled, apparmor_enabled=apparmor_enabled)
     else:
         if wipe_volume and password:
             ssh.write_credential(container, password)
@@ -376,7 +388,8 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
             container_name=container, image=create_image, ram_mb=ram, cpu=cores, pids=limit_pids,
             publish_ip=allocator.publish_ip, published_ports=allocator.publish_spec(container),
             volumes=binds, labels=container_labels,
-            command=ssh.container_command(), hostname=container[:63])
+            command=ssh.container_command(), hostname=container[:63],
+            kvm_enabled=kvm_enabled, apparmor_enabled=apparmor_enabled)
     container_obj = ctr.create(client, spec)
 
     step(5, "starting container")
@@ -400,6 +413,8 @@ def recreate(repo: Any, vps: Dict[str, Any], *, image: Optional[str] = None,
         "ram": f"{ram}MB", "cpu": f"{cores:g}",
         "config": f"{ram}MB RAM / {cores:g} vCPU / {_storage_gb(vps)}GB Disk",
         "pid_limit": limit_pids,
+        "kvm_enabled": kvm_enabled,
+        "apparmor_enabled": apparmor_enabled,
         "volume_name": stored_volume,
         "status": "running" if was_running or wipe_volume else "stopped",
     }
@@ -595,6 +610,7 @@ def clone(repo: Any, vps: Dict[str, Any], new_name: str, *, owner_id: Any,
     binds = volumes.mounts_for(new_name, extra_binds=ssh.bind_mounts(new_name))
     image_ref = str(vps.get("docker_image") or vps.get("os_version") or config.DOCKER_DEFAULT_IMAGE)
     create_image = clone_snapshot or image_ref
+    kvm_enabled, apparmor_enabled = security.security_from_record(vps, config.WORKLOAD_VPS)
     spec = ctr.build_container_spec(
         container_name=new_name, image=create_image, ram_mb=_ram_mb(vps), cpu=_cpu(vps),
         pids=int(vps.get("pid_limit") or config.DOCKER_DEFAULT_PID_LIMIT),
@@ -602,7 +618,8 @@ def clone(repo: Any, vps: Dict[str, Any], new_name: str, *, owner_id: Any,
         volumes=binds,
         labels={config.LABEL_OWNER: str(owner_id), config.LABEL_NODE: str(node["id"]),
                 config.LABEL_IMAGE: image_ref},
-        command=ssh.container_command(), hostname=new_name[:63])
+        command=ssh.container_command(), hostname=new_name[:63],
+        kvm_enabled=kvm_enabled, apparmor_enabled=apparmor_enabled)
     container_obj = ctr.create(client, spec)
     ctr.start(client, new_name)
 
@@ -616,6 +633,7 @@ def clone(repo: Any, vps: Dict[str, Any], new_name: str, *, owner_id: Any,
         "backend": models.DOCKER_BACKEND, "docker_container_id": str(container_obj.short_id),
         "docker_image": image_ref, "volume_name": volumes.volume_name(new_name),
         "ssh_host_port": ssh_port, "pid_limit": vps.get("pid_limit"),
+        "kvm_enabled": kvm_enabled, "apparmor_enabled": apparmor_enabled,
         "quota_method": None, "quota_enforced": False, "provision_state": "active",
     })
     return {"container": new_name, "id": new_id, "ssh_host_port": ssh_port,
@@ -701,6 +719,7 @@ def migrate(repo: Any, vps: Dict[str, Any], target_node_id: int,
     create_image = str(restored.get("rootfs_snapshot") or image_ref)
     if not restored.get("rootfs_snapshot"):
         images_mod.ensure_image(target_client, image_ref)
+    kvm_enabled, apparmor_enabled = security.security_from_record(vps, config.WORKLOAD_VPS)
     spec = ctr.build_container_spec(
         container_name=container, image=create_image, ram_mb=_ram_mb(vps), cpu=_cpu(vps),
         pids=int(vps.get("pid_limit") or config.DOCKER_DEFAULT_PID_LIMIT),
@@ -709,7 +728,8 @@ def migrate(repo: Any, vps: Dict[str, Any], target_node_id: int,
                                config.LABEL_IMAGE: image_ref,
                                config.LABEL_OWNER: str(vps.get("user_id")),
                                config.LABEL_VPS_ID: str(vps.get("id"))},
-        command=ssh.container_command(), hostname=container[:63])
+        command=ssh.container_command(), hostname=container[:63],
+        kvm_enabled=kvm_enabled, apparmor_enabled=apparmor_enabled)
     ctr.create(target_client, spec)
     ctr.start(target_client, container)
 

@@ -5,8 +5,9 @@ Rules this module never breaks:
 
 1. The database is **backed up and integrity-checked before anything changes**.
 2. Migration is additive: ``ALTER TABLE … ADD COLUMN`` and
-   ``CREATE TABLE IF NOT EXISTS`` only.  No column is dropped, renamed or
-   rewritten, and no row is deleted.
+   ``CREATE TABLE IF NOT EXISTS`` only. No column is dropped, renamed or
+   rewritten, and no row is deleted. The v13 update additionally backfills only
+   its newly added security columns on existing Proxmox rows.
 3. Running it twice is a no-op (``already_present`` entries in the report).
 4. Existing LXC-era VPS rows are *tagged* ``backend='lxc-legacy'`` — they are
    never silently re-labelled as Docker containers, because the real
@@ -27,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .. import config
 from . import models
 
 logger = logging.getLogger("tgdbot.database.migrations")
@@ -274,6 +276,17 @@ def migrate(db_path: Path, *, backup_dir: Optional[Path] = None,
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
             report.columns_added.append(f"{table}.{column}")
             logger.info("migration: %s.%s added", table, column)
+
+        # v13: generic defaults describe ordinary VPSes. Existing Proxmox rows
+        # predate the settings and need their previous KVM-backed behaviour
+        # preserved before a recreate or reinstall reads the booleans.
+        proxmox_filter = "backend = 'docker' AND (docker_image = ? OR os_version = ?)"
+        if "vps.kvm_enabled" in report.columns_added:
+            conn.execute(f"UPDATE vps SET kvm_enabled = 1 WHERE {proxmox_filter}",
+                         (config.PROXMOX_IMAGE, config.PROXMOX_IMAGE))
+        if "vps.apparmor_enabled" in report.columns_added:
+            conn.execute(f"UPDATE vps SET apparmor_enabled = 0 WHERE {proxmox_filter}",
+                         (config.PROXMOX_IMAGE, config.PROXMOX_IMAGE))
 
         # 2. new tables ------------------------------------------------------
         before_indexes = set(list_indexes(conn))

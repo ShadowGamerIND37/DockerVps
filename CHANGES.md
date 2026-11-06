@@ -1,3 +1,26 @@
+# v13 — Admin-only KVM and AppArmor creation settings
+
+- Added an admin-only security step to guided VPS creation. Admins can explicitly
+  enable or disable KVM hardware acceleration and AppArmor before deployment;
+  public creation does not render or accept these overrides.
+- Enforced the same authorization in the provisioning backend. Non-admin requests
+  containing either override are rejected before Docker mutation. Ordinary VPS
+  defaults are KVM off/AppArmor on; granted non-admin Proxmox uses fixed KVM
+  on/AppArmor off policy.
+- KVM enabled emits an explicit `/dev/kvm:/dev/kvm` device mapping and disabled
+  emits none. AppArmor enabled emits the configured profile or `docker-default`;
+  disabled emits `apparmor=unconfined`. Privileged mode cannot silently bypass
+  the KVM-disabled guarantee.
+- Proxmox preserves its KVM-backed privileged runtime and rejects KVM-disabled
+  creation rather than claiming an unsupported configuration. Its AppArmor choice
+  is carried into the spec instead of being discarded.
+- Schema v13 persists both booleans, backfills existing Proxmox rows, and reuses
+  the settings during recreate/reinstall, clone and migration.
+
+The historical v12 record below is retained unchanged.
+
+---
+
 # v12 — Proxmox grants and functional custom images
 
 - Added a separately gated Proxmox VE workload using the pinned community

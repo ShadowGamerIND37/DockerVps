@@ -100,6 +100,8 @@ class ProvisionResult:
     container_port: int = config.SSH_CONTAINER_PORT
     access_verified: bool = False
     access_note: str = ""
+    kvm_enabled: bool = False
+    apparmor_enabled: bool = True
 
     def ssh_command(self, host: str) -> str:
         if self.workload == config.WORKLOAD_PROXMOX:
@@ -130,6 +132,10 @@ class ProvisionRequest:
     #: Authorization is checked again in the backend; UI filtering is not enough.
     requester_id: Optional[Any] = None
     requester_admin: bool = False
+    #: ``None`` means use the workload's fixed non-admin policy default.
+    #: Only an administrator may supply either override.
+    kvm_enabled: Optional[bool] = None
+    apparmor_enabled: Optional[bool] = None
 
 
 def generate_password(length: int = 20) -> str:
@@ -184,6 +190,8 @@ class Provisioner:
         self.cluster_volume_created = False
         self.row_inserted = False
         self.workload = config.WORKLOAD_VPS
+        self.kvm_enabled = False
+        self.apparmor_enabled = True
         self.step_names = STEPS
 
     # ── helpers ─────────────────────────────────────────────────────────────
@@ -254,6 +262,13 @@ class Provisioner:
             except TgdBotError as exc:
                 raise self._fail(0, exc) from exc
             pids = proxmox.effective_pids(pids)
+        try:
+            self.kvm_enabled, self.apparmor_enabled = security.resolve_creation_security(
+                workload=self.workload, requester_admin=bool(request.requester_admin),
+                kvm_enabled=request.kvm_enabled,
+                apparmor_enabled=request.apparmor_enabled)
+        except TgdBotError as exc:
+            raise self._fail(0, exc) from exc
         self._step(0, "done", f"{image_ref} • {ram_mb} MiB • {cpu:g} vCPU • {storage_gb} GB")
 
         # 1 — node selection -------------------------------------------------
@@ -281,6 +296,9 @@ class Provisioner:
         try:
             images_mod.ensure_image  # attribute check keeps the import honest
             monitoring.engine_healthy(self.client)
+            if self.workload != config.WORKLOAD_PROXMOX:
+                security.assert_kvm_available(
+                    node_is_local=bool(node.get("is_local")), kvm_enabled=self.kvm_enabled)
             host_note = (proxmox.preflight(node_is_local=bool(node.get("is_local")))
                          if self.workload == config.WORKLOAD_PROXMOX else "capacity available")
         except Exception as exc:
@@ -366,7 +384,8 @@ class Provisioner:
                     password_hash_value=proxmox.password_hash(password),
                     ram_mb=ram_mb, cpu=cpu, pids=pids,
                     publish_ip=self.allocator.publish_ip, published_ports=publish_spec,
-                    labels=container_labels)
+                    labels=container_labels, kvm_enabled=self.kvm_enabled,
+                    apparmor_enabled=self.apparmor_enabled)
             else:
                 ssh.write_credential(container, password)
                 if request.host_motd:
@@ -377,6 +396,8 @@ class Provisioner:
                     publish_ip=self.allocator.publish_ip, published_ports=publish_spec,
                     volumes=binds, labels=container_labels,
                     command=ssh.container_command(), hostname=container[:63],
+                    kvm_enabled=self.kvm_enabled,
+                    apparmor_enabled=self.apparmor_enabled,
                 )
             container_obj = self._with_guard("container_create", ctr.create, self.client, spec)
             self.container_created = True
@@ -491,6 +512,8 @@ class Provisioner:
             "volume_name": volumes.volume_name(container),
             "ssh_host_port": ssh_host_port,
             "pid_limit": limits["pids_limit"],
+            "kvm_enabled": self.kvm_enabled,
+            "apparmor_enabled": self.apparmor_enabled,
             "quota_method": quota["method"],
             "quota_enforced": quota["enforced"],
             "quota_project_id": quota["project_id"],
@@ -518,6 +541,7 @@ class Provisioner:
             record=record, steps=self.step_log,
             workload=self.workload, container_port=access_container_port,
             access_verified=access_ok, access_note=access_note,
+            kvm_enabled=self.kvm_enabled, apparmor_enabled=self.apparmor_enabled,
         )
 
     # ── quota ───────────────────────────────────────────────────────────────

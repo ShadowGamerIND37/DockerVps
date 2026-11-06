@@ -7347,7 +7347,9 @@ def build_vps_record(*, user_id: Union[int, str], vps_id: int, node_id: int, con
 async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_id: int, os_version: str,
                         ram_gb: int, cpu: int, disk_gb: int, expiry_days: Optional[int],
                         is_public: bool, guild: Optional[discord.Guild] = None,
-                        requester_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+                        requester_id: Optional[int] = None,
+                        kvm_enabled: Optional[bool] = None,
+                        apparmor_enabled: Optional[bool] = None) -> Optional[Dict[str, Any]]:
     """
     Full provisioning pipeline with a live animated panel.
 
@@ -7395,7 +7397,8 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
         expiry_days=expiry_days, is_public=bool(is_public),
         password=password, host_motd=HOST_MOTD,
         requester_id=requester_id or owner.id,
-        requester_admin=is_admin_id(requester_id or owner.id))
+        requester_admin=is_admin_id(requester_id or owner.id),
+        kvm_enabled=kvm_enabled, apparmor_enabled=apparmor_enabled)
 
     pump = PanelPump(panel, len(steps))
     pump.start()
@@ -7445,7 +7448,8 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
         return None
 
     audit("vps_create", requester_id or owner.id, target=container,
-          detail=f"os={os_version} ram={ram_gb}GB cpu={cpu} disk={disk_gb}GB public={is_public}")
+          detail=(f"os={os_version} ram={ram_gb}GB cpu={cpu} disk={disk_gb}GB public={is_public} "
+                  f"kvm={result.kvm_enabled} apparmor={result.apparmor_enabled}"))
 
     # ── success: announce + DM credentials ───────────────────────────────────
     ssh_command = None if is_proxmox else ssh_command_for(ssh_port)
@@ -7468,6 +7472,9 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
               f"**RAM:** `{ram_gb} GB`\n"
               f"**CPU:** `{cpu}` vCore\n"
               f"**Storage:** `{disk_gb} GB`", True)
+    add_field(success, "🛡️ Security",
+              f"**KVM:** `{'Enabled' if result.kvm_enabled else 'Disabled'}`\n"
+              f"**AppArmor:** `{'Enabled' if result.apparmor_enabled else 'Disabled'}`", True)
     add_field(success, "⏰ Lifetime", expiration_line(record), True)
     add_field(success, "🔐 Access Your Server",
               f"**Check your DMs!** 📬\n\nCredentials and connection info have been sent to you privately.\n"
@@ -7670,73 +7677,172 @@ class OSSelectView(PanelView):
         try:
             values = interaction.data.get("values", [])
             if not values:
-                logger.warning(f"No values in interaction data for OS selection")
                 await interaction.response.send_message(
-                    embed=error_embed("Invalid Selection", "No OS was selected."),
-                    ephemeral=True)
+                    embed=error_embed("Invalid Selection", "No OS was selected."), ephemeral=True)
                 return
             os_version = str(values[0])
-            logger.debug(f"Selected OS: {os_version}")
             allowed = {str(item.get("value")) for item in os_options_for(interaction.user.id)}
             if os_version not in allowed:
                 await interaction.response.send_message(
                     embed=error_embed("OS Not Allowed", "You do not have access to that OS image."),
                     ephemeral=True)
                 return
-        except (KeyError, TypeError, IndexError) as e:
-            logger.error("Error extracting OS version: %s", e)
+        except (KeyError, TypeError, IndexError) as exc:
+            logger.error("Error extracting OS version: %s", exc)
             await interaction.response.send_message(
-                embed=error_embed("Selection Error", f"Failed to process your selection: {e}"),
+                embed=error_embed("Selection Error", f"Failed to process your selection: {exc}"),
                 ephemeral=True)
             return
-        
-        logger.debug(f"About to defer interaction")
-        await interaction.response.defer()
-        logger.debug(f"Interaction deferred successfully")
-        
-        if interaction.message:
-            logger.debug(f"Removing view from OS selection message")
-            await _safe_edit(interaction.message, view=None)
-        
-        logger.debug(f"Creating Responder with interaction")
-        responder = Responder(interaction)
-        
-        # Send immediate acknowledgment
-        logger.debug(f"Sending provisioning acknowledgment")
-        try:
-            await responder.send(embed=loading_embed(
-                "🚀 Starting VPS Deployment",
-                f"Creating VPS with **{os_version}**…\n\nPlease wait, this takes a few minutes."
-            ))
-        except Exception as e:
-            logger.warning(f"Could not send acknowledgment: {e}")
-        
+
+        # This view is reached only from the admin creation flow. Check again
+        # at the interaction boundary; the backend independently enforces it.
+        if not is_admin_id(interaction.user.id):
+            await interaction.response.send_message(
+                embed=error_embed("Admins Only", "Only administrators can choose VPS security settings."),
+                ephemeral=True)
+            return
+
         proxmox_selected = tgd_proxmox.is_image(os_version)
         ram_gb = max(self.ram_gb, tgd_proxmox.MIN_RAM_MB // 1024) if proxmox_selected else self.ram_gb
         disk_gb = max(self.disk_gb, tgd_proxmox.MIN_STORAGE_GB) if proxmox_selected else self.disk_gb
-        logger.info(f"Starting VPS provisioning: os={os_version}, ram={ram_gb}GB, cpu={self.cpu}, disk={disk_gb}GB, node={self.node_id}")
+        await interaction.response.defer()
+        if interaction.message:
+            await _safe_edit(interaction.message, view=None)
+
+        security_view = SecurityOptionsView(
+            interaction.user.id, self.owner, self.node_id, os_version,
+            ram_gb, self.cpu, disk_gb, self.days)
+        await security_view.build_options()
+        embed = create_embed(
+            "Choose VPS security settings",
+            f"**OS:** `{os_version}`\n"
+            f"**Plan:** {ram_gb} GB RAM • {self.cpu} vCPU • {disk_gb} GB disk\n\n"
+            "These settings are **admin-only**. KVM maps `/dev/kvm` only when enabled. "
+            "AppArmor is applied explicitly at container creation.",
+            COLORS["os"])
+        msg = await interaction.followup.send(embed=embed, view=security_view)
+        security_view.message = msg
+        self.stop()
+
+
+class SecurityOptionsView(PanelView):
+    """Admin-only creation controls for the two Docker security settings."""
+
+    def __init__(self, author_id: int, owner: discord.abc.User, node_id: int,
+                 os_version: str, ram_gb: int, cpu: int, disk_gb: int, days: int):
+        super().__init__(author_id, timeout=300)
+        self.owner, self.node_id, self.os_version = owner, node_id, os_version
+        self.ram_gb, self.cpu, self.disk_gb, self.days = ram_gb, cpu, disk_gb, days
+        self.proxmox_selected = tgd_proxmox.is_image(os_version)
+        workload = tgd_config.WORKLOAD_PROXMOX if self.proxmox_selected else tgd_config.WORKLOAD_VPS
+        self.kvm_enabled, self.apparmor_enabled = tgd_security.creation_security_defaults(workload)
+
+    async def build_options(self) -> None:
+        self.add_select(
+            placeholder="KVM hardware acceleration",
+            options=[
+                discord.SelectOption(label="Disabled", value="0",
+                                     description="Do not map /dev/kvm into the VPS",
+                                     default=not self.kvm_enabled),
+                discord.SelectOption(label="Enabled", value="1",
+                                     description="Map /dev/kvm into the VPS",
+                                     default=self.kvm_enabled),
+            ], callback=self._choose_kvm, row=0)
+        self.add_select(
+            placeholder="AppArmor",
+            options=[
+                discord.SelectOption(label="Disabled", value="0",
+                                     description="Use apparmor=unconfined",
+                                     default=not self.apparmor_enabled),
+                discord.SelectOption(label="Enabled", value="1",
+                                     description="Use the configured or docker-default profile",
+                                     default=self.apparmor_enabled),
+            ], callback=self._choose_apparmor, row=1)
+        self.add_button(label="Deploy VPS", style=discord.ButtonStyle.success,
+                        emoji="🚀", callback=self._confirm, row=2)
+
+    async def _admin_interaction(self, interaction: discord.Interaction) -> bool:
+        if is_admin_id(interaction.user.id):
+            return True
+        await interaction.response.send_message(
+            embed=error_embed("Admins Only", "Only administrators can change KVM or AppArmor settings."),
+            ephemeral=True)
+        return False
+
+    @staticmethod
+    def _selected_value(interaction: discord.Interaction) -> Optional[str]:
+        values = (interaction.data or {}).get("values") or []
+        return str(values[0]) if values else None
+
+    async def _choose_kvm(self, interaction: discord.Interaction) -> None:
+        if not await self._admin_interaction(interaction):
+            return
+        value = self._selected_value(interaction)
+        if value not in {"0", "1"}:
+            await interaction.response.send_message(
+                embed=error_embed("Invalid Selection", "Choose either KVM enabled or disabled."),
+                ephemeral=True)
+            return
+        self.kvm_enabled = value == "1"
+        await interaction.response.defer()
+
+    async def _choose_apparmor(self, interaction: discord.Interaction) -> None:
+        if not await self._admin_interaction(interaction):
+            return
+        value = self._selected_value(interaction)
+        if value not in {"0", "1"}:
+            await interaction.response.send_message(
+                embed=error_embed("Invalid Selection", "Choose either AppArmor enabled or disabled."),
+                ephemeral=True)
+            return
+        self.apparmor_enabled = value == "1"
+        await interaction.response.defer()
+
+    async def _confirm(self, interaction: discord.Interaction) -> None:
+        if not await self._admin_interaction(interaction):
+            return
+        if self.proxmox_selected and not self.kvm_enabled:
+            await interaction.response.send_message(
+                embed=error_embed(
+                    "KVM Required for Proxmox",
+                    "The supported Proxmox runtime requires KVM. Choose KVM enabled, "
+                    "or go back and select a regular Linux OS."),
+                ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        if interaction.message:
+            await _safe_edit(interaction.message, view=None)
+        responder = Responder(interaction)
+        try:
+            await responder.send(embed=loading_embed(
+                "🚀 Starting VPS Deployment",
+                f"Creating VPS with **{self.os_version}**…\n\n"
+                f"KVM: **{'enabled' if self.kvm_enabled else 'disabled'}** • "
+                f"AppArmor: **{'enabled' if self.apparmor_enabled else 'disabled'}**"))
+        except Exception as exc:
+            logger.warning("Could not send security-options acknowledgment: %s", exc)
 
         try:
             record = await provision_vps(
-                responder=responder, owner=self.owner, node_id=self.node_id, os_version=os_version,
-                ram_gb=ram_gb, cpu=self.cpu, disk_gb=disk_gb, expiry_days=self.days,
-                is_public=False, guild=interaction.guild, requester_id=interaction.user.id,
-            )
-            logger.debug(f"provision_vps returned: {record is not None}")
+                responder=responder, owner=self.owner, node_id=self.node_id,
+                os_version=self.os_version, ram_gb=self.ram_gb, cpu=self.cpu,
+                disk_gb=self.disk_gb, expiry_days=self.days, is_public=False,
+                guild=interaction.guild, requester_id=interaction.user.id,
+                kvm_enabled=self.kvm_enabled, apparmor_enabled=self.apparmor_enabled)
             if record:
-                logger.info("Admin created %s for %s", record["container_name"], self.owner.id)
-            else:
-                logger.warning("VPS creation failed or returned None")
-        except Exception as e:
-            logger.error(f"provision_vps raised exception: {e}", exc_info=True)
+                logger.info("Admin created %s for %s (KVM=%s AppArmor=%s)",
+                            record["container_name"], self.owner.id,
+                            self.kvm_enabled, self.apparmor_enabled)
+        except Exception as exc:
+            logger.error("provision_vps raised exception: %s", exc, exc_info=True)
             try:
-                await responder.send(embed=error_embed("Provisioning Error", f"An error occurred: {truncate_text(str(e), 500)}"))
+                await responder.send(embed=error_embed(
+                    "Provisioning Error", f"An error occurred: {truncate_text(str(exc), 500)}"))
             except Exception as send_err:
-                logger.error(f"Could not send error message: {send_err}")
+                logger.error("Could not send error message: %s", send_err)
         finally:
-            logger.debug(f"Stopping OSSelectView")
             self.stop()
-
 
 @bot.hybrid_command(name="create", aliases=["create-vps", "newvps"])
 @is_admin()
