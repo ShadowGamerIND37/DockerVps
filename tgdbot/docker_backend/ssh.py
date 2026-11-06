@@ -458,39 +458,65 @@ def ssh_banner(host: str, port: int, timeout: float = 8.0) -> str:
         return ""
 
 
+def _ssh_exception_detail(exc: BaseException) -> str:
+    """Keep diagnostics useful even for empty EOFError/TimeoutError messages."""
+    text = str(exc).strip()
+    name = type(exc).__name__
+    return f"{name}: {text}" if text else name
+
+
 def verify_ssh_login(host: str, port: int, username: str, password: str,
-                     timeout: int = 20) -> Tuple[bool, str]:
+                     timeout: int = 20, attempts: int = 3,
+                     retry_delay: float = 1.0) -> Tuple[bool, str]:
     """
     Perform a real SSH login against the published port.
 
-    Requires paramiko; when it is missing the check is skipped (the TCP/banner
-    probe still runs) so provisioning does not fail on an optional dependency.
+    A fresh client is used for each attempt because sshd can accept a banner
+    connection before it is ready to complete authentication. Authentication
+    failures are final; transient negotiation, EOF and socket errors are
+    retried. Paramiko remains optional, as documented by ``verify_access``.
     """
     try:
         import paramiko
     except Exception:
         return False, "paramiko is not installed — login verification skipped"
 
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    try:
-        client.connect(hostname=host, port=int(port), username=username, password=password,
-                       timeout=timeout, banner_timeout=timeout, auth_timeout=timeout,
-                       allow_agent=False, look_for_keys=False)
-        _stdin, stdout, _stderr = client.exec_command("echo TGDBOT_SSH_OK; id -u", timeout=timeout)
-        output = stdout.read().decode("utf-8", "replace")
-        return ("TGDBOT_SSH_OK" in output, output.strip()[:200])
-    except paramiko.AuthenticationException:
-        return False, "Authentication failed with the generated password"
-    except paramiko.SSHException as exc:
-        return False, f"SSH negotiation failed: {exc}"
-    except Exception as exc:
-        return False, f"Could not connect: {exc}"
-    finally:
+    target = f"{username}@{host}:{int(port)}"
+    total = max(1, int(attempts))
+    for attempt in range(1, total + 1):
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
-            client.close()
-        except Exception:
-            pass
+            client.connect(hostname=host, port=int(port), username=username, password=password,
+                           timeout=timeout, banner_timeout=timeout, auth_timeout=timeout,
+                           allow_agent=False, look_for_keys=False)
+            _stdin, stdout, _stderr = client.exec_command(
+                "echo TGDBOT_SSH_OK; id -u", timeout=timeout)
+            output = stdout.read().decode("utf-8", "replace")
+            if "TGDBOT_SSH_OK" not in output:
+                detail = output.strip()[:200] or "empty response"
+                return False, f"SSH command verification failed for {target}: {detail}"
+            return True, output.strip()[:200]
+        except paramiko.AuthenticationException:
+            return False, f"Authentication failed for {target} with the generated password"
+        except (paramiko.SSHException, EOFError, OSError) as exc:
+            kind = ("SSH negotiation failed" if isinstance(exc, paramiko.SSHException)
+                    else "Could not connect")
+            detail = f"{kind} for {target}: {_ssh_exception_detail(exc)}"
+            if attempt < total:
+                logger.debug("SSH login attempt %d/%d for %s failed: %s",
+                             attempt, total, target, _ssh_exception_detail(exc))
+                time.sleep(max(0.0, float(retry_delay)))
+                continue
+            return False, f"{detail} (after {total} attempt(s))"
+        except Exception as exc:
+            return False, f"SSH verification failed for {target}: {_ssh_exception_detail(exc)}"
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+    return False, f"SSH verification failed for {target}"
 
 
 def verify_access(host: str, port: int, password: str, *, username: str = "root") -> Tuple[bool, str]:

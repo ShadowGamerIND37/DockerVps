@@ -47,7 +47,7 @@ Argon2id/PBKDF2 `hash_password`/`verify_password`, `validate_ssh_target`,
 | Feature | v10 | v11 |
 | --- | --- | --- |
 | Container engine | `lxc` CLI, shelled out over SSH | Docker Engine API via the `docker` SDK |
-| Create workflow | ad-hoc sequence | 22-step transaction with per-step rollback |
+| Create workflow | ad-hoc sequence | 18-step transaction with per-step rollback |
 | Persistent storage | LXD storage pool | Named volume `tgdbot_<name>` at `/var/lib/tgdbot` plus writable-root image snapshots |
 | Ports | LXD proxy devices | Docker port publishing, tracked in `docker_ports` |
 | Disk quota | `limits.disk` | XFS project quota or Btrfs qgroup, reported honestly |
@@ -83,7 +83,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 | `tgdbot/services/` | Provisioning, lifecycle, backups, expiration, nodes |
 | `tgdbot/web/terminal.py` | Web SSH terminal |
 | `tgdbot/scripts/` | Installer, migration, healthcheck, acceptance test |
-| `tests/` | 150 tests + a fake Docker client |
+| `tests/` | 156 tests + a fake Docker client |
 
 **Capability**
 
@@ -92,7 +92,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 - Volume and writable-root backups with checksum verification and retention
 - Per-node quota support reporting, with data-volume scope stated explicitly
 - Orphan detection without automatic deletion
-- 150 unit tests that run with no Docker daemon
+- 156 unit tests that run with no Docker daemon
 
 ---
 
@@ -202,6 +202,16 @@ Writing tests surfaced real defects, not just test errors:
     failures could leave the HTTP listener completely unstarted. `main()` now
     starts WebSSH before `bot.run()`, restores saved terminal tokens at the same
     time, and only marks the listener started after its thread launches.
+16. **SSH login verification failed on the first transient EOF and could hide
+    the actual error.** Empty exception messages now include the exception type
+    and SSH target. Negotiation, EOF and socket failures get up to three attempts
+    with a fresh Paramiko client; authentication failures are never retried.
+17. **Quota and database finalization did not roll back host quotas cleanly.**
+    Quota-processing exceptions now identify step 17. If database registration
+    then fails, rollback releases the enforced quota before removing the volume;
+    a failed release retains the volume and quota record for a safe retry.
+18. **Public VPS requests lost their visibility flag.** `is_public` from the
+    provision request is now persisted in the registered VPS row.
 
 `tests/test_static_integrity.py` now fails the build on either failure mode:
 
@@ -279,7 +289,7 @@ above rather than exposing it:
 ## Test results
 
 ```
-150 passed
+155 passed, 1 skipped
 ```
 
 | File | Tests | Covers |
@@ -293,7 +303,8 @@ above rather than exposing it:
 | `test_creation_views.py` | 1 | guided modal node options and node → OS select handoff |
 | `test_slash_commands.py` | 4 | 88 prefix/slash names, payload serialization, variadic-argument options, context menu |
 | `test_panel_pump.py` | 1 | runtime progress-pump start, named task, event delivery and shutdown |
-| `test_provisioning.py` | 23 | happy path, rollback at each injected failure, plan validation, credential vault |
+| `test_provisioning.py` | 26 | happy path, rollback at each injected failure, quota/database finalization, plan validation, credential vault |
+| `test_ssh_verification.py` | 3 | transient EOF retry, empty-exception diagnostics, authentication failure short-circuit |
 | `test_rebrand_compat.py` | 18 | pre-rebrand containers and volumes still resolve, foreign containers never adopted, filter OR semantics |
 | `test_web_terminal.py` | 19 | no password in page source, PIN lockout, ad-hoc refusal, headers, startup order |
 | `test_static_integrity.py` | 11 | undefined globals, unresolvable module attributes, deleted-helper revival, progress-callback safety, no privileged mode |

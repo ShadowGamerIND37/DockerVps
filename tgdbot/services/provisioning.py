@@ -2,10 +2,11 @@
 Transactional VPS provisioning.
 
 The engine walks the full deployment pipeline and, if *any* step fails, rolls
-back everything it created: the container is removed, the volume is deleted
-(a failed first boot has no customer data in it), the reserved ports are
-released and the partial database row is dropped.  Nothing is left behind that
-``!delete-useless-vps`` would have to clean up.
+back everything it created: the container is removed, host quota is released,
+the volume is deleted (a failed first boot has no customer data in it), reserved
+ports are released and the partial database row is dropped. Cleanup failures are
+reported; a volume whose host quota could not be released is retained for a safe
+retry rather than leaving an untracked quota behind.
 
 All functions are synchronous; the Discord layer calls them through
 :func:`tgdbot.concurrency.run_in_thread`.
@@ -376,7 +377,10 @@ class Provisioner:
 
         # 16 — storage quota -------------------------------------------------
         self._step(16, "running")
-        quota = self._apply_quota(container, storage_gb)
+        try:
+            quota = self._apply_quota(container, storage_gb)
+        except Exception as exc:
+            raise self._fail(16, exc) from exc
         self._step(16, "done" if quota["enforced"] else "skipped", quota["detail"][:80])
 
         # 17 — database ------------------------------------------------------
@@ -396,6 +400,7 @@ class Provisioner:
             "config": f"{ram_mb}MB RAM / {cpu:g} vCPU / {storage_gb}GB Disk",
             "os_version": image_ref,
             "status": "running",
+            "is_public": bool(request.is_public),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "expiration_date": expiry,
             "root_password": None,      # the caller stores the encrypted value
@@ -469,18 +474,53 @@ class Provisioner:
     def rollback(self) -> List[str]:
         """Undo everything this run created.  Never raises."""
         container = self.request.container_name
+        quota = None
+        mountpoint = ""
+        try:
+            quota = self.repo.get_quota(container)
+            if quota and quota.get("enforced"):
+                mountpoint = volumes.mountpoint(self.client, container) or ""
+        except Exception as exc:
+            self.cleanup_errors.append(f"quota lookup failed: {exc}")
+
+        container_gone = not self.container_created
         if self.container_created:
             try:
                 ctr.remove(self.client, container, volumes=False, force=True)
+                container_gone = True
                 self.cleanup.append(f"container {container} removed")
             except Exception as exc:
                 self.cleanup_errors.append(f"container removal failed: {exc}")
+
+        quota_needs_release = bool(quota and quota.get("enforced"))
+        quota_cleared = not quota_needs_release
+        if quota_needs_release:
+            if not container_gone:
+                self.cleanup_errors.append(
+                    "host storage quota retained because the container still exists")
+            else:
+                try:
+                    released, detail = resources.release_quota(
+                        mountpoint, str(quota.get("method") or ""),
+                        int(quota.get("project_id") or 0))
+                    if released:
+                        quota_cleared = True
+                        self.cleanup.append("host storage quota released")
+                    else:
+                        self.cleanup_errors.append(f"host quota release failed: {detail}")
+                except Exception as exc:
+                    self.cleanup_errors.append(f"host quota release failed: {exc}")
+
         if self.volume_created:
-            try:
-                volumes.remove(self.client, container, force=True)
-                self.cleanup.append(f"volume {volumes.volume_name(container)} removed")
-            except Exception as exc:
-                self.cleanup_errors.append(f"volume removal failed: {exc}")
+            if quota_needs_release and not quota_cleared:
+                self.cleanup_errors.append(
+                    "volume retained because its host storage quota is still active")
+            else:
+                try:
+                    volumes.remove(self.client, container, force=True)
+                    self.cleanup.append(f"volume {volumes.volume_name(container)} removed")
+                except Exception as exc:
+                    self.cleanup_errors.append(f"volume removal failed: {exc}")
         if self.allocator is not None:
             try:
                 released = self.allocator.release_all(container)
@@ -494,10 +534,11 @@ class Provisioner:
                 self.cleanup.append("partial database row removed")
             except Exception as exc:
                 self.cleanup_errors.append(f"database cleanup failed: {exc}")
-        try:
-            self.repo.delete_quota(container)
-        except Exception:
-            pass
+        if quota_cleared:
+            try:
+                self.repo.delete_quota(container)
+            except Exception as exc:
+                self.cleanup_errors.append(f"quota record cleanup failed: {exc}")
         ssh.clear_credential(container)
         logger.warning("provisioning rollback for %s: %s%s", container, self.cleanup,
                        f" (errors: {self.cleanup_errors})" if self.cleanup_errors else "")
