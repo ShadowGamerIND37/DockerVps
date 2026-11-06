@@ -20,9 +20,13 @@ def run_async(coroutine):
 class FakeResponse:
     def __init__(self):
         self.deferred = False
+        self.messages = []
 
     async def defer(self, **_kwargs):
         self.deferred = True
+
+    async def send_message(self, *args, **kwargs):
+        self.messages.append((args, kwargs))
 
 
 class FakeFollowup:

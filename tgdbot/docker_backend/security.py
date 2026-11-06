@@ -8,10 +8,13 @@ between the provisioning, resize and rebuild paths.
 
 Hard rules (not configurable):
 
-* ``privileged`` is never enabled — a privileged container is root on the host.
+* Ordinary customer VPS never enable ``privileged`` — a privileged container is
+  root on the host. The separately gated Proxmox workload is an explicit,
+  documented exception with its own runtime contract.
 * ``/var/run/docker.sock`` is never mounted into a customer container.
 * Host devices and host namespaces (``pid=host``, ``network=host``,
-  ``ipc=host``) are never shared.
+  ``ipc=host``) are never shared implicitly. The only device exception is an
+  explicit, administrator-selected ``/dev/kvm`` mapping for a new VPS.
 * Only the bot's own read-only init script and credential file are bind
   mounted.  Everything else lives on the VPS volume.
 """
@@ -19,6 +22,7 @@ Hard rules (not configurable):
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .. import config
@@ -97,8 +101,10 @@ FORBIDDEN_MOUNTS: Tuple[str, ...] = (
     "/var/lib/docker",
 )
 
+# /dev/kvm is handled separately by device_mappings(): it is never mapped by
+# default, but an administrator may explicitly enable it for a new VPS.
 FORBIDDEN_DEVICES: Tuple[str, ...] = (
-    "/dev/kvm", "/dev/fuse", "/dev/mem", "/dev/kmsg", "/dev/net/tun",
+    "/dev/fuse", "/dev/mem", "/dev/kmsg", "/dev/net/tun",
 )
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
@@ -171,15 +177,103 @@ def protocols_for(protocol: str) -> Tuple[str, ...]:
 
 # ── host config assembly ────────────────────────────────────────────────────
 
-def build_security_opts() -> List[str]:
+def apparmor_security_opt(enabled: Optional[bool]) -> Optional[str]:
+    """Return the explicit AppArmor mode for a new container.
+
+    ``None`` retains legacy low-level behaviour. Provisioning always passes a
+    boolean: enabled uses the configured profile (or Docker's default), while
+    disabled is deliberately unconfined. An enabled request can never resolve
+    to the ``unconfined`` profile.
+    """
+    if enabled is False:
+        return "apparmor=unconfined"
+    profile = config.DOCKER_APPARMOR_PROFILE
+    if enabled is True:
+        profile = profile or "docker-default"
+        if profile.strip().lower() == "unconfined":
+            raise SecurityPolicyError(
+                "AppArmor is enabled for this VPS but DOCKER_APPARMOR_PROFILE "
+                "is set to unconfined. Configure a real AppArmor profile first.")
+        return f"apparmor={profile}"
+    return f"apparmor={profile}" if profile else None
+
+
+def build_security_opts(apparmor_enabled: Optional[bool] = None) -> List[str]:
     opts: List[str] = []
     if config.DOCKER_NO_NEW_PRIVILEGES:
         opts.append("no-new-privileges:true")
-    if config.DOCKER_APPARMOR_PROFILE:
-        opts.append(f"apparmor={config.DOCKER_APPARMOR_PROFILE}")
+    apparmor = apparmor_security_opt(apparmor_enabled)
+    if apparmor:
+        opts.append(apparmor)
     if config.DOCKER_SECCOMP_PROFILE:
         opts.append(f"seccomp={config.DOCKER_SECCOMP_PROFILE}")
     return opts
+
+
+def device_mappings(kvm_enabled: Optional[bool] = None) -> List[str]:
+    """Map KVM only when the resolved creation policy explicitly enables it."""
+    return ["/dev/kvm:/dev/kvm"] if kvm_enabled is True else []
+
+
+def creation_security_defaults(workload: str) -> Tuple[bool, bool]:
+    """Return ``(kvm, apparmor)`` defaults which users cannot override."""
+    if workload == config.WORKLOAD_PROXMOX:
+        # The supported dockur/proxmox runtime is KVM-backed. AppArmor defaults
+        # off for this privileged systemd workload, not for ordinary VPSes.
+        return True, False
+    return False, True
+
+
+def _stored_bool(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def security_from_record(record: Dict[str, Any], workload: str) -> Tuple[bool, bool]:
+    """Read persisted settings, with defaults for pre-migration records."""
+    default_kvm, default_apparmor = creation_security_defaults(workload)
+    kvm = record.get("kvm_enabled")
+    apparmor = record.get("apparmor_enabled")
+    return (default_kvm if kvm is None else _stored_bool(kvm),
+            default_apparmor if apparmor is None else _stored_bool(apparmor))
+
+
+def resolve_creation_security(*, workload: str, requester_admin: bool,
+                              kvm_enabled: Optional[bool],
+                              apparmor_enabled: Optional[bool]) -> Tuple[bool, bool]:
+    """Authorize and resolve creation-only security overrides.
+
+    This check lives in the provisioning backend, not in Discord components.
+    A non-admin request containing either field is rejected even when the value
+    equals the default, preventing callers from smuggling an override through
+    another entry point.
+    """
+    if not requester_admin and (kvm_enabled is not None or apparmor_enabled is not None):
+        raise SecurityPolicyError(
+            "Only administrators may change KVM or AppArmor settings.")
+    default_kvm, default_apparmor = creation_security_defaults(workload)
+    kvm = default_kvm if kvm_enabled is None else bool(kvm_enabled)
+    apparmor = default_apparmor if apparmor_enabled is None else bool(apparmor_enabled)
+    if workload == config.WORKLOAD_PROXMOX and not kvm:
+        raise SecurityPolicyError(
+            "The supported Proxmox runtime requires KVM. KVM-disabled Proxmox "
+            "creation is refused rather than starting a guest with an unsafe "
+            "or unsupported device policy.")
+    if not kvm and config.DOCKER_PRIVILEGED:
+        raise SecurityPolicyError(
+            "KVM-disabled VPS creation is incompatible with privileged Docker mode.")
+    # Validate the profile before any volume or port mutation.
+    apparmor_security_opt(apparmor)
+    return kvm, apparmor
+
+
+def assert_kvm_available(*, node_is_local: bool, kvm_enabled: bool) -> None:
+    """Fail clearly before creation when a local host has no KVM device."""
+    if kvm_enabled and node_is_local and not Path("/dev/kvm").exists():
+        raise SecurityPolicyError(
+            "KVM was enabled for this VPS but /dev/kvm is not available on "
+            "the selected node. Disable KVM or choose a KVM-capable node.")
 
 
 def build_ulimits() -> List[Dict[str, Any]]:
@@ -219,7 +313,9 @@ def build_host_config(*, ram_mb: int, cpu: float, pids: int, publish_ip: str,
                       published_ports: Sequence[Tuple[int, int, str]] = (),
                       volumes: Optional[Dict[str, Dict[str, str]]] = None,
                       network: str = "", extra: Optional[Dict[str, Any]] = None,
-                      restart_policy: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                      restart_policy: Optional[Dict[str, Any]] = None,
+                      kvm_enabled: Optional[bool] = None,
+                      apparmor_enabled: Optional[bool] = None) -> Dict[str, Any]:
     """
     Assemble the create-time keyword payload for a customer container.
 
@@ -259,13 +355,13 @@ def build_host_config(*, ram_mb: int, cpu: float, pids: int, publish_ip: str,
         "pids_limit": max(32, int(pids or config.DOCKER_DEFAULT_PID_LIMIT)),
         "privileged": bool(config.DOCKER_PRIVILEGED),
         "cap_drop": cap_drop_list(),
-        "security_opt": build_security_opts(),
+        "security_opt": build_security_opts(apparmor_enabled),
         "ulimits": build_ulimits(),
         "sysctls": build_sysctls(),
         "init": bool(config.DOCKER_CONTAINER_INIT),
         "publish_all_ports": False,
         "ports": ports,
-        "devices": [],
+        "devices": device_mappings(kvm_enabled),
         "device_requests": [],
         "ipc_mode": "private",
         "network_mode": network or config.DOCKER_DEFAULT_NETWORK,
@@ -277,6 +373,14 @@ def build_host_config(*, ram_mb: int, cpu: float, pids: int, publish_ip: str,
         kwargs["userns_mode"] = config.DOCKER_USERNS_MODE
     if extra:
         kwargs.update(extra)
+    if kvm_enabled is False:
+        # Privileged mode can expose host devices without an explicit mapping;
+        # never let it silently defeat the KVM-disabled contract.
+        if kwargs.get("privileged"):
+            raise SecurityPolicyError(
+                "KVM-disabled VPS creation is incompatible with privileged Docker mode.")
+        if any("/dev/kvm" in str(device) for device in (kwargs.get("devices") or [])):
+            raise SecurityPolicyError("A KVM-disabled VPS cannot receive /dev/kvm.")
     return kwargs
 
 

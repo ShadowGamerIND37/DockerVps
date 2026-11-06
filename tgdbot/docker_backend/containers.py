@@ -137,7 +137,9 @@ def build_container_spec(*, container_name: str, image: str, ram_mb: int, cpu: f
                          network: Optional[str] = None,
                          command: Optional[Sequence[str]] = None,
                          hostname: Optional[str] = None,
-                         storage_opt: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+                         storage_opt: Optional[Dict[str, str]] = None,
+                         kvm_enabled: Optional[bool] = None,
+                         apparmor_enabled: Optional[bool] = None) -> Dict[str, Any]:
     """
     Assemble the keyword payload for ``client.containers.create(**spec)``.
 
@@ -156,6 +158,7 @@ def build_container_spec(*, container_name: str, image: str, ram_mb: int, cpu: f
         ram_mb=ram_mb, cpu=cpu, pids=pids, publish_ip=publish_ip,
         published_ports=published_ports, volumes=volumes,
         network=network or config.DOCKER_DEFAULT_NETWORK,
+        kvm_enabled=kvm_enabled, apparmor_enabled=apparmor_enabled,
     )
     if storage_opt:
         spec["storage_opt"] = dict(storage_opt)

@@ -212,8 +212,8 @@ class Repository:
     # ── VPS records ─────────────────────────────────────────────────────────
     DOCKER_FIELDS = (
         "backend", "docker_container_id", "docker_image", "volume_name", "ssh_host_port",
-        "pid_limit", "quota_method", "quota_enforced", "quota_project_id", "provision_state",
-        "restart_count", "last_health_ts",
+        "pid_limit", "kvm_enabled", "apparmor_enabled", "quota_method", "quota_enforced",
+        "quota_project_id", "provision_state", "restart_count", "last_health_ts",
     )
 
     @staticmethod
@@ -229,6 +229,9 @@ class Repository:
         vps["whitelisted"] = bool(vps.get("whitelisted") or 0)
         vps["is_public"] = bool(vps.get("is_public") or 0)
         vps["quota_enforced"] = bool(vps.get("quota_enforced") or 0)
+        for key in ("kvm_enabled", "apparmor_enabled"):
+            if key in vps and vps[key] is not None:
+                vps[key] = bool(vps[key])
         vps["os_version"] = vps.get("os_version") or config.DOCKER_DEFAULT_IMAGE
         vps["node_id"] = int(vps.get("node_id") or 1)
         vps["backend"] = str(vps.get("backend") or models.DOCKER_BACKEND)
@@ -270,7 +273,8 @@ class Repository:
                 continue
             if key in ("shared_with", "suspension_history"):
                 value = json.dumps(value or [])
-            if key in ("suspended", "whitelisted", "is_public", "quota_enforced"):
+            if key in ("suspended", "whitelisted", "is_public", "quota_enforced",
+                       "kvm_enabled", "apparmor_enabled"):
                 value = 1 if value else 0
             sets.append(f"{key} = ?")
             params.append(value)
@@ -315,6 +319,10 @@ class Repository:
             "volume_name": vps.get("volume_name"),
             "ssh_host_port": vps.get("ssh_host_port"),
             "pid_limit": vps.get("pid_limit"),
+            "kvm_enabled": (None if vps.get("kvm_enabled") is None
+                            else (1 if vps.get("kvm_enabled") else 0)),
+            "apparmor_enabled": (None if vps.get("apparmor_enabled") is None
+                                 else (1 if vps.get("apparmor_enabled") else 0)),
             "quota_method": vps.get("quota_method"),
             "quota_enforced": 1 if vps.get("quota_enforced") else 0,
             "quota_project_id": vps.get("quota_project_id"),

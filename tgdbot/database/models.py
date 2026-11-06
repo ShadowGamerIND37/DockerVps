@@ -10,11 +10,12 @@ Nothing here renames or drops an existing column: the original ``vps``,
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # ── columns added to existing tables ────────────────────────────────────────
-# (table, column definition).  Applied with ALTER TABLE … ADD COLUMN, so the
-# migration is idempotent and never touches existing rows' data.
+# (table, column definition). Applied with ALTER TABLE … ADD COLUMN, so the
+# migration is idempotent. The v13 migration separately backfills only its new
+# security columns for existing Proxmox rows.
 
 ADDED_COLUMNS = [
     # vps — Docker identity + quota/provisioning state
@@ -24,6 +25,8 @@ ADDED_COLUMNS = [
     ("vps", "volume_name TEXT"),
     ("vps", "ssh_host_port INTEGER"),
     ("vps", "pid_limit INTEGER"),
+    ("vps", "kvm_enabled INTEGER DEFAULT 0"),
+    ("vps", "apparmor_enabled INTEGER DEFAULT 1"),
     ("vps", "quota_method TEXT"),
     ("vps", "quota_enforced INTEGER DEFAULT 0"),
     ("vps", "quota_project_id INTEGER"),

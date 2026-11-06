@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from tgdbot import config
 from tgdbot.database import migrations
 from tgdbot.database import models
 from tgdbot.database.repository import Repository
@@ -157,8 +158,9 @@ def test_docker_columns_and_tables_are_added(v10_database):
     data = migrations.inspect_database(v10_database)
     vps_columns = set(data["detail"]["vps"]["columns"])
     for column in ("backend", "docker_container_id", "docker_image", "volume_name",
-                   "ssh_host_port", "pid_limit", "quota_method", "quota_enforced",
-                   "quota_project_id", "provision_state", "restart_count", "last_health_ts"):
+                   "ssh_host_port", "pid_limit", "kvm_enabled", "apparmor_enabled",
+                   "quota_method", "quota_enforced", "quota_project_id", "provision_state",
+                   "restart_count", "last_health_ts"):
         assert column in vps_columns, f"vps.{column} was not added"
 
     node_columns = set(data["detail"]["nodes"]["columns"])
@@ -227,6 +229,31 @@ def test_report_is_written_to_disk(v10_database, tmp_path):
     payload = __import__("json").loads(reports[-1].read_text())
     assert payload["from_version"] == 10
     assert payload["to_version"] == models.SCHEMA_VERSION
+
+
+def test_v13_backfills_existing_proxmox_security(v10_database):
+    """The ordinary-column defaults must not disable KVM on old Proxmox rows."""
+    conn = sqlite3.connect(v10_database)
+    try:
+        # Simulate a v12 row which already has Docker identity columns but not
+        # the v13 security columns.
+        conn.execute("ALTER TABLE vps ADD COLUMN backend TEXT DEFAULT 'docker'")
+        conn.execute("ALTER TABLE vps ADD COLUMN docker_image TEXT")
+        conn.execute(
+            "INSERT INTO vps (user_id, node_id, container_name, ram, cpu, storage, config,"
+            " os_version, status, backend, docker_image) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("333", 1, "pve-vps-3", "4GB", "2", "40GB", "Proxmox",
+             config.PROXMOX_IMAGE, "running", "docker", config.PROXMOX_IMAGE))
+        conn.execute("UPDATE meta SET value='12' WHERE key='schema_version'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    report = migrations.migrate(v10_database, skip_backup=True)
+    assert report.ok, report.summary_text()
+    row = Repository(v10_database).get_vps_by_container("pve-vps-3")
+    assert row["kvm_enabled"] is True
+    assert row["apparmor_enabled"] is False
 
 
 def test_fresh_database_gets_the_full_v11_schema(tmp_path):

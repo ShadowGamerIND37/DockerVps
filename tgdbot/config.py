@@ -228,7 +228,7 @@ DATABASE_PATH: Path = env_path("DATABASE_PATH", str(BASE_DIR / "vps.db"))
 DATABASE_BACKUP_DIR: Path = env_path("DATABASE_BACKUP_DIR", str(BASE_DIR / "backups"))
 MIGRATION_REPORT_DIR: Path = env_path("MIGRATION_REPORT_DIR", str(BASE_DIR / "migration_reports"))
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 # ── Image catalogue ─────────────────────────────────────────────────────────

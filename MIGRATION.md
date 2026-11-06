@@ -1,3 +1,26 @@
+# Additive v13 update — creation security settings
+
+The v13 migration adds `vps.kvm_enabled` and `vps.apparmor_enabled`. It is
+additive and does not recreate containers or change their current runtime
+configuration. New admin-created VPS records store the resolved choices; ordinary
+legacy VPS rows default to KVM disabled and AppArmor enabled. Existing Proxmox
+rows are backfilled to KVM enabled and AppArmor disabled so a later recreate or
+reinstall preserves their previous KVM-backed runtime contract.
+
+Only administrators can supply creation-time overrides. Public/non-admin requests
+use fixed workload defaults, and the provisioning service rejects attempts to
+submit either field. KVM-enabled containers receive an explicit
+`/dev/kvm:/dev/kvm` mapping; KVM-disabled containers receive no such mapping.
+AppArmor enabled uses `DOCKER_APPARMOR_PROFILE` or `docker-default`; disabled uses
+`apparmor=unconfined`. KVM-disabled Proxmox creation is refused because its
+privileged runtime requires KVM and cannot guarantee device isolation otherwise.
+
+The normal startup migration applies v13 automatically. To inspect or run it
+manually, use `python -m tgdbot.scripts.migrate_database`; a backup and migration
+report are produced according to the existing migration options.
+
+---
+
 # Additive v12 update — Proxmox grants
 
 The v12 migration adds one table, `proxmox_grants`, and advances the schema

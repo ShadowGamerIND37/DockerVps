@@ -54,6 +54,8 @@ def test_admin_can_provision_without_a_grant_row(repo, proxmox_ready, engine):
     host = container.attrs["HostConfig"]
     assert host["Privileged"] is True
     assert host["CapDrop"] == []
+    assert host["Devices"] == ["/dev/kvm:/dev/kvm"]
+    assert "apparmor=unconfined" in host["SecurityOpt"]
     assert host["PidsLimit"] == proxmox.MIN_PIDS
     assert container.kwargs["stop_signal"] == "SIGRTMIN+3"
     assert container.kwargs.get("command") is None
