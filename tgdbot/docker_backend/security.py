@@ -27,9 +27,9 @@ from ..errors import SecurityPolicyError
 # ── capability policy ───────────────────────────────────────────────────────
 #
 # Docker's default set already excludes SYS_ADMIN/SYS_MODULE/etc.  We drop the
-# remainder that a normal Linux workload does not need. CHOWN/DAC_*/SETUID/
-# SETGID/AUDIT_WRITE are deliberately *kept* for dpkg, apk and PAM. OpenSSH's
-# mandatory pre-auth privilege separation also requires SYS_CHROOT.
+# remainder that a normal Linux workload does not need. CHOWN/FOWNER/DAC_*/
+# SETUID/SETGID/AUDIT_WRITE are deliberately *kept* for APT, dpkg, apk and PAM.
+# OpenSSH's mandatory pre-auth privilege separation also requires SYS_CHROOT.
 #: Candidate capabilities to remove from a customer VPS.
 #:
 #: Docker already withholds most of these (``SYS_ADMIN``, ``SYS_MODULE``,
@@ -73,10 +73,12 @@ DEFAULT_CAP_DROP: Tuple[str, ...] = (
 #: In particular, dropping SYS_CHROOT makes sshd accept TCP and send its banner,
 #: then kill every pre-auth session when ``chroot("/run/sshd")`` is denied. To
 #: a Paramiko client that looks like an EOFError/ConnectionResetError, not an
-#: authentication failure.
+#: authentication failure. APT also needs FOWNER when it chmods package-index
+#: files after changing their ownership to its sandbox user; without it, root
+#: gets SetupAPTPartialDirectory/Item::QueueURI "Operation not permitted" warnings.
 CAP_KEEP: frozenset = frozenset({
     "CHOWN", "DAC_OVERRIDE", "SETUID", "SETGID", "KILL", "AUDIT_WRITE", "FSETID", "SETFCAP",
-    "SYS_CHROOT",
+    "FOWNER", "SYS_CHROOT",
 })
 
 # Paths that must never appear as a bind mount inside a customer container.
