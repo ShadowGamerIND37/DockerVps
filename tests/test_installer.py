@@ -8,6 +8,7 @@ without changing the host or requiring a Discord token.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -59,6 +60,53 @@ def test_main_menu_has_the_three_requested_actions(tmp_path):
     assert "2) Migration" in result.stdout
     assert "3) Auto Updater" in result.stdout
     assert "\x1b[" not in result.stdout  # captured/non-TTY output stays script-friendly
+
+
+def test_process_substitution_clones_before_using_application_files(tmp_path):
+    tools = make_app(tmp_path)
+    target = tmp_path / "cloned-bot"
+    make_executable(
+        tools / "bin" / "git",
+        """#!/usr/bin/env bash
+set -eu
+printf '%s\\n' "$*" >> "$BOOTSTRAP_LOG"
+if [[ "$1" != "clone" ]]; then
+  echo "unexpected git invocation: $*" >&2
+  exit 2
+fi
+target=""
+for argument in "$@"; do target="$argument"; done
+mkdir -p "$target"
+cp "$BOOTSTRAP_SOURCE" "$target/installer.sh"
+cp "$BOOTSTRAP_ENV" "$target/.env.example"
+chmod +x "$target/installer.sh"
+""",
+    )
+    env = os.environ.copy()
+    env.pop("APP_DIR", None)
+    env.update({
+        "INSTALL_DIR": str(target),
+        "GIT_BIN": str(tools / "bin" / "git"),
+        "REPO_URL": "https://example.invalid/DockerVps.git",
+        "BOOTSTRAP_SOURCE": str(SCRIPT),
+        "BOOTSTRAP_ENV": str(ROOT / ".env.example"),
+        "BOOTSTRAP_LOG": str(tmp_path / "clone.log"),
+        "PYTHON_BIN": sys.executable,
+    })
+    command = f"bash <(cat {shlex.quote(str(SCRIPT))}) --help"
+    result = subprocess.run(
+        ["bash", "-c", command], cwd=ROOT, env=env, text=True,
+        capture_output=True, timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Download TGD Bot files" in result.stdout
+    assert "TGD Bot installer" in result.stdout
+    assert ".env.example is missing" not in result.stderr
+    assert (target / "installer.sh").exists()
+    assert (target / ".env.example").exists()
+    clone_log = (tmp_path / "clone.log").read_text(encoding="utf-8")
+    assert "clone --depth 1 https://example.invalid/DockerVps.git" in clone_log
 
 
 def test_install_prompts_preserve_blank_values_and_hide_token(tmp_path):

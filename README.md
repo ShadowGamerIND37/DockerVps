@@ -24,7 +24,7 @@ Discord commands, panels, animations and database rows. See
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (218 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (219 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -81,6 +81,18 @@ Or use the menu-driven installer from the repository root:
 ```bash
 sudo bash installer.sh
 ```
+
+You can also start it directly from GitHub. The first run clones the complete
+repository before showing the menu, so it does not try to find `.env.example`
+under `/dev/fd`:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/ShadowGamerIND37/DockerVps/refs/heads/main/installer.sh)
+```
+
+Root installations default to `/opt/tgdbot`; non-root installations default to
+`~/tgdbot`. Set `INSTALL_DIR` to choose another directory or `REPO_URL` to use a
+fork. An existing valid checkout is reused, preserving its `.env` and database.
 
 It provides three options, with an ASCII banner, bordered menus and clear
 step-by-step prompts. Colors are used only on interactive terminals; piped and
@@ -428,7 +440,7 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**218 tests: 217 passed, 1 skipped.** They cover the security policy, port
+**219 tests: 218 passed, 1 skipped.** They cover the security policy, port
 allocation, schema migration, SSH verification retries and diagnostics, the
 provisioning transaction and rollback, the web terminal's credential handling,
 the Proxmox native HTTP/noVNC gateway, and backward compatibility across the

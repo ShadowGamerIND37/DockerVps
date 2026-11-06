@@ -1,5 +1,8 @@
 # Menu-driven installer and automatic updates
 
+- Curl/process-substitution installs now clone the complete repository into a
+  real install directory before reading `.env.example` or showing the menu.
+  Existing checkouts are reused; `INSTALL_DIR` and `REPO_URL` are configurable.
 - Polished the interactive installer with a TGD BOT ASCII banner, bordered
   menus, descriptive actions, numbered configuration prompts and clean Ctrl+C
   handling. Colors are disabled for non-TTY output.
