@@ -46,6 +46,11 @@ synchronous services that run on a bounded worker pool.
 
 ## Install
 
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/ShadowGamerIND37/DockerVps/refs/heads/main/installer.sh)
+```
+
+
 ```bash
 git clone <your-fork> TGD Bot && cd TGD Bot
 
