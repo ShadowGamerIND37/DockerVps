@@ -83,7 +83,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 | `tgdbot/services/` | Provisioning, lifecycle, backups, expiration, nodes |
 | `tgdbot/web/terminal.py` | Web SSH terminal |
 | `tgdbot/scripts/` | Installer, migration, healthcheck, acceptance test |
-| `tests/` | 148 tests + a fake Docker client |
+| `tests/` | 149 tests + a fake Docker client |
 
 **Capability**
 
@@ -92,7 +92,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 - Volume and writable-root backups with checksum verification and retention
 - Per-node quota support reporting, with data-volume scope stated explicitly
 - Orphan detection without automatic deletion
-- 148 unit tests that run with no Docker daemon
+- 149 unit tests that run with no Docker daemon
 
 ---
 
@@ -193,6 +193,11 @@ Writing tests surfaced real defects, not just test errors:
     directory values without sourcing `.env` and chowns exactly those paths.
     Runtime asset setup checks writability and reports the remediation instead
     of silently moving customer data to a fallback directory.
+14. **Port verification used creation-time inspect data.** Docker can leave
+    `NetworkSettings.Ports` empty in the object returned by `containers.create()`
+    and populate it at startup. Verification now reloads that object before
+    comparing bindings, preventing a healthy VPS from being rolled back with a
+    false "host port is not bound" error.
 
 `tests/test_static_integrity.py` now fails the build on either failure mode:
 
@@ -270,7 +275,7 @@ above rather than exposing it:
 ## Test results
 
 ```
-148 passed
+149 passed
 ```
 
 | File | Tests | Covers |
@@ -280,7 +285,7 @@ above rather than exposing it:
 | `test_database_bootstrap.py` | 1 | fresh configured DB is migrated before the provisioning repository reads it |
 | `test_env_value.py` | 2 | safe .env path parsing, legacy paths, shell precedence, no shell execution |
 | `test_runtime_assets.py` | 1 | unwritable host directory diagnostics and remediation |
-| `test_ports.py` | 21 | reservation, conflicts, ranges, TCP/UDP, release, history, summary |
+| `test_ports.py` | 22 | reservation, conflicts, ranges, TCP/UDP, release, history, binding refresh |
 | `test_creation_views.py` | 1 | guided modal node options and node → OS select handoff |
 | `test_slash_commands.py` | 4 | 88 prefix/slash names, payload serialization, variadic-argument options, context menu |
 | `test_panel_pump.py` | 1 | runtime progress-pump start, named task, event delivery and shutdown |
