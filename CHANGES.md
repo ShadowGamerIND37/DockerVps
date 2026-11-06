@@ -83,7 +83,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 | `tgdbot/services/` | Provisioning, lifecycle, backups, expiration, nodes |
 | `tgdbot/web/terminal.py` | Web SSH terminal |
 | `tgdbot/scripts/` | Installer, migration, healthcheck, acceptance test |
-| `tests/` | 157 tests + a fake Docker client |
+| `tests/` | 158 tests + a fake Docker client |
 
 **Capability**
 
@@ -92,7 +92,7 @@ the infrastructure moved into `tgdbot/` (9,441 lines across 33 modules).
 - Volume and writable-root backups with checksum verification and retention
 - Per-node quota support reporting, with data-volume scope stated explicitly
 - Orphan detection without automatic deletion
-- 157 unit tests that run with no Docker daemon
+- 158 unit tests that run with no Docker daemon
 
 ---
 
@@ -220,6 +220,12 @@ Writing tests surfaced real defects, not just test errors:
     dropped. A real OpenSSH run reproduced `chroot("/run/sshd"): Operation not
     permitted`, and the corrected drop list passed real Paramiko logins both
     with and without PAM.
+20. **APT could not chmod its package-index files.** Dropping `FOWNER` caused
+    `SetupAPTPartialDirectory` and `Item::QueueURI` "Operation not permitted"
+    warnings after APT changed index ownership for its sandbox user. `CAP_KEEP`
+    now retains `FOWNER`. A disposable local APT repository reproduced the
+    warnings with the old drop list and completed without them using the
+    corrected one.
 
 `tests/test_static_integrity.py` now fails the build on either failure mode:
 
@@ -297,12 +303,12 @@ above rather than exposing it:
 ## Test results
 
 ```
-156 passed, 1 skipped
+157 passed, 1 skipped
 ```
 
 | File | Tests | Covers |
 | --- | --- | --- |
-| `test_security_policy.py` | 25 | capability drop including OpenSSH chroot retention, privileged/socket/namespace refusal, name and image validation |
+| `test_security_policy.py` | 26 | capability drop including OpenSSH/APT requirements, privileged/socket/namespace refusal, name and image validation |
 | `test_migrations.py` | 13 | idempotency, backup integrity, rollback note, base-schema drift, fresh bootstrap |
 | `test_database_bootstrap.py` | 1 | fresh configured DB is migrated before the provisioning repository reads it |
 | `test_env_value.py` | 2 | safe .env path parsing, legacy paths, shell precedence, no shell execution |
