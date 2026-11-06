@@ -33,7 +33,7 @@ from .docker_backend import (
 from .docker_backend.client import POOL, reset_pool, validate_remote_endpoint
 from .docker_backend.ports import PURPOSE_SSH, PURPOSE_USER, PortAllocator
 from .errors import TgdBotError
-from .services import backup_service, expiration, lifecycle, node_service, provisioning
+from .services import backup_service, cloudflared, expiration, lifecycle, node_service, provisioning
 
 logger = logging.getLogger("tgdbot.platform")
 
@@ -184,6 +184,14 @@ class Platform:
     async def exec(self, container_name: str, command: str) -> Tuple[int, str, str]:
         vps = await self._vps(container_name)
         return await run_in_thread(lifecycle.exec_command, self.repo, vps, command)
+
+    async def cloudflared(self, container_name: str, *,
+                          progress: Optional[Callable[[int, str, str], None]] = None,
+                          ) -> Dict[str, str]:
+        """Set up a quick tunnel inside a freshly reloaded Proxmox VPS record."""
+        vps = await self._vps(container_name)
+        return await run_in_thread(cloudflared.setup_quick_tunnel, self.repo, vps,
+                                   progress=progress)
 
     async def start(self, container_name: str) -> str:
         return await run_in_thread(lifecycle.start, self.repo, await self._vps(container_name))

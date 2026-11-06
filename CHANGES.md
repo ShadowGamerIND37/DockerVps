@@ -1,3 +1,17 @@
+# Cloudflare quick tunnels for Proxmox VPS
+
+- Proxmox management panels now include a **Cloudflare** action. It installs
+  Cloudflare's repository and `cloudflared` inside the VPS, then starts a
+  background quick tunnel to `https://localhost:8006` with `--no-tls-verify`.
+- The Discord response reports live setup stages and returns the generated
+  `trycloudflare.com` URL after reading `/root/cloudflared.log`. Package,
+  startup and URL-wait failures are shown in the progress message.
+- The action is restricted to Proxmox images, delivered ephemerally, and warns
+  that anyone with the public URL can reach the Proxmox login page. Ordinary
+  Linux management panels are unchanged.
+
+---
+
 # Public Proxmox console addresses
 
 - Proxmox gateway links now inherit `YOUR_SERVER_IP` by default instead of
