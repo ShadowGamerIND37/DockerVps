@@ -87,6 +87,20 @@ PROXMOX_REQUIRE_KVM: bool = env_bool("PROXMOX_REQUIRE_KVM", True)
 PROXMOX_REQUIRE_FUSE: bool = env_bool("PROXMOX_REQUIRE_FUSE", True)
 PROXMOX_READY_ATTEMPTS: int = env_int("PROXMOX_READY_ATTEMPTS", 90)
 PROXMOX_READY_INTERVAL: float = env_float("PROXMOX_READY_INTERVAL", 2.0)
+
+# ── Native Proxmox browser console ─────────────────────────────────────────
+#: This is separate from ordinary VPS WebSSH. It proxies Proxmox's native UI,
+#: API and noVNC WebSockets, rather than opening a text terminal in the guest.
+#: Both the listener and the upstream default to loopback. A remote browser
+#: needs an SSH tunnel (or an explicitly configured secure reverse proxy).
+PROXMOX_CONSOLE_ENABLED: bool = env_bool("PROXMOX_CONSOLE_ENABLED", True)
+PROXMOX_CONSOLE_HOST: str = str(env("PROXMOX_CONSOLE_HOST", "127.0.0.1"))
+PROXMOX_CONSOLE_PORT: int = env_int("PROXMOX_CONSOLE_PORT", 5001)
+PROXMOX_CONSOLE_PUBLIC_HOST: str = str(env("PROXMOX_CONSOLE_PUBLIC_HOST", "127.0.0.1"))
+PROXMOX_CONSOLE_URL_FORMAT: str = str(env("PROXMOX_CONSOLE_URL_FORMAT", "http://{SERVER_IP}:{PORT}"))
+PROXMOX_CONSOLE_UPSTREAM_HOST: str = str(env("PROXMOX_CONSOLE_UPSTREAM_HOST", "127.0.0.1"))
+PROXMOX_CONSOLE_SESSION_TTL: int = max(1, env_int("PROXMOX_CONSOLE_SESSION_TTL", 1800))
+PROXMOX_CONSOLE_MAX_SESSIONS: int = max(1, env_int("PROXMOX_CONSOLE_MAX_SESSIONS", 200))
 #: Allow an administrator-approved custom image to be used for new VPS.
 DOCKER_ALLOW_CUSTOM_IMAGES: bool = env_bool("DOCKER_ALLOW_CUSTOM_IMAGES", True)
 #: Always `docker pull` before create, even when a local copy exists.

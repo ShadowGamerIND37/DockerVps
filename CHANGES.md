@@ -1,3 +1,23 @@
+# Proxmox native browser console gateway
+
+- Added a separate `aiohttp` service for Proxmox VE only. It reverse-proxies the
+  native Proxmox UI, API and binary noVNC WebSockets, so VM ISO installers,
+  BIOS screens and boot menus remain graphical instead of being replaced by a
+  text terminal.
+- Bot-issued `/c/<token>` links are short-lived, exchange for an HttpOnly
+  session cookie, and preserve owner/shared-user/admin authorization. The
+  browser cannot choose an upstream host or port, and the gateway cookie is not
+  forwarded to Proxmox. Large request bodies stream for ISO uploads.
+- Defaults bind the gateway and its server-side upstream to `127.0.0.1`; the
+  ordinary VPS WebSSH service is unchanged. Remote browsers need an SSH tunnel
+  or another explicitly configured secure loopback-access arrangement.
+- Added fake-upstream HTTP, redirect, cookie, authorization and binary
+  WebSocket regressions, including the HTTP noVNC `encrypt=0` compatibility
+  redirect. A real-TCP-listener smoke test also passed; no live Proxmox/browser
+  verification was available.
+
+---
+
 # Proxmox console certificate repair
 
 - Added a guarded certificate/key check before Proxmox console readiness. It
