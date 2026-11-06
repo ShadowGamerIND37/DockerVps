@@ -82,7 +82,9 @@ Or use the menu-driven installer from the repository root:
 sudo bash installer.sh
 ```
 
-It provides three options:
+It provides three options, with an ASCII banner, bordered menus and clear
+step-by-step prompts. Colors are used only on interactive terminals; piped and
+systemd output remains plain text.
 
 1. **Install Files Of Bot And Run** — asks for the Discord bot token, admin ID
    (`MAIN_ADMIN_ID`) and owner ID(s) (`OWNER_IDS`). Press **Enter** at any prompt

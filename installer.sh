@@ -11,16 +11,39 @@
 # installations. No Docker cleanup, volume removal or forced Git reset is done.
 set -Eeuo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;36m'
-NC='\033[0m'
+# Color is useful on a terminal but noisy in pipes, CI and systemd logs.
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  RED='\033[0;31m'
+  GREEN='\033[0;32m'
+  YELLOW='\033[1;33m'
+  BLUE='\033[0;36m'
+  BOLD='\033[1m'
+  NC='\033[0m'
+else
+  RED=''; GREEN=''; YELLOW=''; BLUE=''; BOLD=''; NC=''
+fi
 
-info() { printf '%b[installer]%b %s\n' "$GREEN" "$NC" "$*"; }
-warn() { printf '%b[installer]%b %s\n' "$YELLOW" "$NC" "$*"; }
-die()  { printf '%b[installer]%b %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
-step() { printf '\n%b── %s%b\n' "$BLUE" "$*" "$NC"; }
+info() { printf '%b[OK]%b %s\n' "$GREEN" "$NC" "$*"; }
+warn() { printf '%b[WARN]%b %s\n' "$YELLOW" "$NC" "$*"; }
+die()  { printf '%b[ERROR]%b %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
+step() { printf '\n%b==> %s%b\n' "$BLUE" "$*" "$NC"; }
+
+show_banner() {
+  printf '%b' "$BLUE"
+  cat <<'EOF'
+  _____   ____   ____    ____    ___   _____
+ |_   _| / ___| |  _ \  | __ )  / _ \ |_   _|
+   | |  | |  _  | | | | |  _ \ | | | |  | |
+   | |  | |_| | | |_| | | |_) | | |_| |  | |
+   |_|   \____| |____/  |____/  \___/   |_|
+EOF
+  printf '%b' "$NC"
+  printf '  %bTGD BOT%b | Docker VPS Hosting\n' "$BOLD" "$NC"
+  printf '  Installer / Migration / Auto Updater\n'
+  printf '  %s\n' "$APP_DIR"
+}
+
+trap 'printf "\n"; warn "cancelled by user"; exit 130' INT
 
 APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 SERVICE_NAME="${SERVICE_NAME:-tgdbot}"
@@ -60,7 +83,7 @@ EOF
 pause() {
   # Do not consume scripted input or hang a non-interactive invocation.
   if [[ -t 0 ]]; then
-    printf '\nPress Enter to return to the menu…'
+    printf '\nPress Enter to return to the menu...'
     IFS= read -r _ || true
   fi
 }
@@ -131,12 +154,17 @@ PY
 prompt_install_values() {
   local token_input admin_input owner_input
 
-  printf 'Bot token (Enter = keep current .env value): '
+  step "Bot configuration"
+  cat <<'EOF'
+  Enter a new value or press Enter to keep the current .env setting.
+  The token is hidden while you type. Owner IDs may be comma separated.
+EOF
+  printf '  [1/3] Bot token: '
   IFS= read -r -s token_input || token_input=""
   printf '\n'
-  printf 'Admin ID / MAIN_ADMIN_ID (Enter = keep current): '
+  printf '  [2/3] Admin ID / MAIN_ADMIN_ID: '
   IFS= read -r admin_input || admin_input=""
-  printf 'Owner ID(s) / OWNER_IDS, comma separated (Enter = keep current): '
+  printf '  [3/3] Owner ID(s) / OWNER_IDS: '
   IFS= read -r owner_input || owner_input=""
 
   if [[ -n "$token_input" ]]; then
@@ -285,13 +313,21 @@ auto_update_menu() {
   local choice
   while true; do
     step "Auto Updater"
-    cat <<EOF
-  1) Check for updates and apply now
-  2) Enable automatic updates (systemd timer: $AUTO_UPDATE_INTERVAL)
-  3) Disable automatic updates
-  0) Back
+    printf '  Schedule: %s\n' "$AUTO_UPDATE_INTERVAL"
+    cat <<'EOF'
+  +--------------------------------------------------+
+  |  AUTO UPDATER                                    |
+  +--------------------------------------------------+
+  |  1) Check for updates and apply now              |
+  |     Fast-forward Git, migrate and restart        |
+  |  2) Enable automatic updates                     |
+  |     Use the systemd timer for scheduled checks   |
+  |  3) Disable automatic updates                    |
+  |     Stop the timer and remove its units          |
+  |  0) Back                                         |
+  +--------------------------------------------------+
 EOF
-    printf 'Select an option [0-3]: '
+    printf '  Select an option [0-3]: '
     if ! IFS= read -r choice; then
       printf '\n'
       return 0
@@ -311,12 +347,19 @@ main_menu() {
   while true; do
     step "TGD Bot Installer"
     cat <<'EOF'
-  1) Install Files Of Bot And Run
-  2) Migration
-  3) Auto Updater
-  0) Exit
+  +--------------------------------------------------+
+  |  MAIN MENU                                       |
+  +--------------------------------------------------+
+  |  1) Install Files Of Bot And Run                 |
+  |     Configure .env, install and start the bot    |
+  |  2) Migration                                    |
+  |     Back up and upgrade the database schema      |
+  |  3) Auto Updater                                 |
+  |     Check updates or manage the update timer     |
+  |  0) Exit                                         |
+  +--------------------------------------------------+
 EOF
-    printf 'Select an option [0-3]: '
+    printf '  Select an option [0-3]: '
     if ! IFS= read -r choice; then
       printf '\n'
       return 0
@@ -332,7 +375,7 @@ EOF
 }
 
 case "${1:-}" in
-  ""|--menu) main_menu ;;
+  ""|--menu) show_banner; main_menu ;;
   --install) install_and_run ;;
   --migrate|--migration) run_migration ;;
   --auto-update|--run-auto-update) run_auto_update ;;

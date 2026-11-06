@@ -1,5 +1,8 @@
 # Menu-driven installer and automatic updates
 
+- Polished the interactive installer with a TGD BOT ASCII banner, bordered
+  menus, descriptive actions, numbered configuration prompts and clean Ctrl+C
+  handling. Colors are disabled for non-TTY output.
 - Added root `installer.sh` with three options: install/run, database migration,
   and Auto Updater management.
 - Installation prompts for the Discord token, `MAIN_ADMIN_ID` and `OWNER_IDS`;
