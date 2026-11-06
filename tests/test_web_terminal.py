@@ -272,11 +272,13 @@ def test_bot_main_starts_webssh_before_discord(monkeypatch):
     monkeypatch.setattr(bot_module, "WEBSSH_ENABLED", True)
     monkeypatch.setattr(bot_module.bot, "start_webssh_server",
                         lambda: events.append("webssh"))
+    monkeypatch.setattr(bot_module.bot, "start_proxmox_console_server",
+                        lambda: events.append("proxmox-console"))
     monkeypatch.setattr(bot_module.bot, "run",
                         lambda *args, **kwargs: events.append("discord"))
 
     assert bot_module.main() == 0
-    assert events == ["webssh", "discord"]
+    assert events == ["webssh", "proxmox-console", "discord"]
 
 
 def test_issue_requires_a_published_ssh_port(repo, fake_node, backend, vault):

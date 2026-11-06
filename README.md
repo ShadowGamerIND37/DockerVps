@@ -23,7 +23,7 @@ Discord commands, panels, animations and database rows. See
 | `tgdbot/web/` | The web SSH terminal (Flask). |
 | `tgdbot/scripts/` | Installer, database migration, healthcheck and acceptance test. |
 | `webssh.html` | Terminal front-end. Unchanged design; the backend was rewritten. |
-| `tests/` | Unit tests (198 of them). They run without a Docker daemon. |
+| `tests/` | Unit tests (202 of them). They run without a Docker daemon. |
 | `.env.example` | Every supported environment variable, documented. |
 
 `bot.py` never talks to the Docker SDK directly. It goes through
@@ -85,7 +85,7 @@ bash tgdbot/scripts/install.sh          # never runs destructive Docker cleanup
 
 ## Configuration
 
-Everything is environment-driven; see `.env.example` for all 125 variables.
+Everything is environment-driven; see `.env.example` for all variables.
 The ones that matter most:
 
 | Variable | Default | Meaning |
@@ -99,12 +99,16 @@ The ones that matter most:
 | `DOCKER_PORT_RANGE_START` / `_END` | `25000` / `26999` | Pool for user-published ports. |
 | `DOCKER_RESERVED_PORTS` | — | Host ports the allocator must never hand out. |
 | `DOCKER_DEFAULT_RAM` / `_CPU` / `_STORAGE` | `1024` / `1` / `10` | Default VPS size. |
-| `WEBSSH_ENABLED` / `_HOST` / `_PORT` | `true` / `0.0.0.0` / `5000` | Web terminal. |
+| `WEBSSH_ENABLED` / `_HOST` / `_PORT` | `true` / `0.0.0.0` / `5000` | Text WebSSH terminal for ordinary VPSes. |
 | `WEBSSH_ALLOW_ADHOC` | `false` | Allow connecting to hosts the bot didn't issue. |
+| `PROXMOX_CONSOLE_ENABLED` / `_HOST` / `_PORT` | `true` / `127.0.0.1` / `5001` | Native Proxmox UI/noVNC gateway, separate from WebSSH. |
+| `PROXMOX_CONSOLE_PUBLIC_HOST` | `127.0.0.1` | Host written into Proxmox console links. |
+| `PROXMOX_CONSOLE_UPSTREAM_HOST` | `127.0.0.1` | Server-side address of the published Proxmox HTTPS port. |
 | `SECRET_KEY` | generated | Encrypts stored root passwords. **Back this up.** |
 
 The WebSSH HTTP listener starts directly from `main()` before Discord gateway
-login; it does not wait for the gateway's `on_ready` event.
+login; it does not wait for the gateway's `on_ready` event. The Proxmox console
+listener starts at the same point, independently, on port `5001` by default.
 
 If `SECRET_KEY` is unset the bot generates `.secret_key` next to `bot.py` and
 warns. Losing it makes every stored root password unreadable — the VPS keeps
@@ -222,9 +226,12 @@ policy; the Proxmox profile never applies to them.
 - OpenSSL on the bot host. The generated root password is converted to a
   SHA-512 `PASSWORD_HASH`; plaintext `PASSWORD` is never placed in container
   metadata.
-- A published TCP port mapped to container port **8006**. The DM contains the
-  native `https://YOUR_SERVER_IP:port` console, not SSH/WebSSH instructions.
-  Proxmox initially uses a self-signed certificate. Before probing, the bot
+- A published TCP port mapped to container port **8006**. The DM and management
+  panel contain a short-lived **Proxmox console gateway** link (by default
+  `http://127.0.0.1:5001/c/<token>`), not SSH/WebSSH instructions. The gateway
+  connects from the bot host to the published port over server-side HTTPS; the
+  browser never supplies an upstream target. Proxmox initially uses a
+  self-signed certificate on that upstream hop. Before probing, the bot
   checks the node certificate and key as `www-data`; an unusable pair waits
   for the pmxcfs mount, IPC and quorum, then gets a bounded `pvecm updatecerts
   --force` repair followed by a `pveproxy` restart. If a cloud DNS search
@@ -241,9 +248,32 @@ policy; the Proxmox profile never applies to them.
 ### Proxmox UI and guest boot menus
 
 The pinned image already contains an installed Proxmox VE host; there is no
-separate Proxmox host-installer boot menu to complete. Open the HTTPS link in
+separate Proxmox host-installer boot menu to complete. Open the gateway link in
 the credential DM (or choose **Proxmox UI** in the management panel), then log
-in as `root` with the `Linux PAM standard authentication` realm.
+in as `root` with the `Linux PAM standard authentication` realm. The link swaps
+a short-lived token for an HttpOnly session cookie and redirects to the native
+Proxmox application. The proxy preserves its root-relative UI/API paths and
+relays binary noVNC WebSockets; it does not render a text-only substitute. On
+an HTTP loopback gateway, it adds noVNC's native `encrypt=0` query override to
+the console iframe so the browser uses `ws://` locally; the upstream hop stays
+HTTPS/WSS. Proxmox's xterm.js console already follows the page scheme.
+
+**Loopback access:** the defaults deliberately use `127.0.0.1` for both the
+listener and the server-side Proxmox upstream. A literal `127.0.0.1` browser
+URL works only when the browser runs on the bot host. For a remote browser,
+forward the gateway port through an existing secure connection first, for
+example:
+
+```sh
+ssh -N -L 5001:127.0.0.1:5001 user@<bot-host>
+```
+
+Then open the bot-issued `http://127.0.0.1:5001/c/<token>` link on the remote
+machine. No public IPv4 web listener is required. If a different deployment
+uses a TLS reverse proxy, configure its public URL explicitly and keep the
+upstream address server-side; do not expose the native Proxmox port merely to
+make the link work. The gateway accepts only Proxmox VE records and enforces
+owner, shared-user and administrator authorization when issuing links.
 
 To install an operating system **inside a guest VM**:
 
@@ -326,10 +356,11 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-**198 tests: 197 passed, 1 skipped.** They cover the security policy, port
+**202 tests: 201 passed, 1 skipped.** They cover the security policy, port
 allocation, schema migration, SSH verification retries and diagnostics, the
 provisioning transaction and rollback, the web terminal's credential handling,
-and backward compatibility across the UnixNodes → TGD Bot rebrand. They run
+the Proxmox native HTTP/noVNC gateway, and backward compatibility across the
+UnixNodes → TGD Bot rebrand. They run
 against a fake Docker client (`tests/fake_docker.py`) and need **no Docker
 daemon**.
 

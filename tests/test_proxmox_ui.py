@@ -40,13 +40,13 @@ def test_proxmox_panel_uses_native_ui_and_explains_novnc():
     assert "Host Shell" in labels
     assert "Web SSH" not in labels
 
-    interaction = SimpleNamespace(response=FakeResponse())
+    interaction = SimpleNamespace(response=FakeResponse(), user=SimpleNamespace(id=111))
     asyncio.run(view._webssh(interaction))
     sent = interaction.response.kwargs
     assert sent is not None
     embed = sent["embed"]
     assert embed.title == "Proxmox UI & VM Console"
-    assert bot.tgd_proxmox.console_url(bot.YOUR_SERVER_IP, 22786) in embed.description
+    assert "http://127.0.0.1:5001/c/" in embed.description
     text = embed.description + "\n" + "\n".join(field.value for field in embed.fields)
     assert "Linux PAM standard authentication" in text
     assert "noVNC" in text

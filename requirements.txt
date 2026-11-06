@@ -12,6 +12,11 @@ paramiko>=3.4.0
 # Web SSH terminal
 Flask>=3.0.0
 
+# Native Proxmox UI + noVNC HTTP/WebSocket gateway
+# (also installed transitively by discord.py, but direct here because the
+# console service imports it independently of the Discord client.)
+aiohttp>=3.9.0
+
 # Optional but recommended
 psutil>=5.9.0            # host metrics fallback
 argon2-cffi>=23.1.0      # Argon2id password hashing (PBKDF2 is the fallback)

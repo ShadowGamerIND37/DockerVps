@@ -172,6 +172,7 @@ try:
         provisioning as tgd_provisioning,
     )
 
+    from tgdbot.web import proxmox_console as tgd_proxmox_console
     INFRA = tgd_platform.platform          # async façade used by every command
     TGDBOT_AVAILABLE = True
 except ImportError as _exc:  # pragma: no cover
@@ -279,6 +280,16 @@ WEBSSH_ALLOW_PRIVATE_HOSTS: bool = _env_bool("WEBSSH_ALLOW_PRIVATE_HOSTS", True)
 WEBSSH_DEFAULT_PIN: bool = _env_bool("WEBSSH_DEFAULT_PIN", False)
 WEBSSH_PIN_ATTEMPTS: int = _env_int("WEBSSH_PIN_ATTEMPTS", 5)
 WEBSSH_CONNECT_TIMEOUT: int = _env_int("WEBSSH_CONNECT_TIMEOUT", 15)
+
+# ── Native Proxmox UI + noVNC gateway (separate from text WebSSH) ────────────
+PROXMOX_CONSOLE_ENABLED: bool = tgd_config.PROXMOX_CONSOLE_ENABLED
+PROXMOX_CONSOLE_HOST: str = tgd_config.PROXMOX_CONSOLE_HOST
+PROXMOX_CONSOLE_PORT: int = tgd_config.PROXMOX_CONSOLE_PORT
+PROXMOX_CONSOLE_PUBLIC_HOST: str = tgd_config.PROXMOX_CONSOLE_PUBLIC_HOST
+PROXMOX_CONSOLE_URL_FORMAT: str = tgd_config.PROXMOX_CONSOLE_URL_FORMAT
+PROXMOX_CONSOLE_UPSTREAM_HOST: str = tgd_config.PROXMOX_CONSOLE_UPSTREAM_HOST
+PROXMOX_CONSOLE_SESSION_TTL: int = tgd_config.PROXMOX_CONSOLE_SESSION_TTL
+PROXMOX_CONSOLE_MAX_SESSIONS: int = tgd_config.PROXMOX_CONSOLE_MAX_SESSIONS
 
 # ── Available Operating Systems ──────────────────────────────────────────────
 # v11: legacy alias kept for any custom code that imported the name.  It now
@@ -4719,6 +4730,80 @@ else:
     WEBSSH_BACKEND = None
     WEBSSH_SETTINGS = None
 
+# ── Native Proxmox browser console ──────────────────────────────────────────
+# Proxmox is not put through the Paramiko/xterm WebSSH service. This gateway
+# forwards the native application, including its API and noVNC WebSockets.
+def _proxmox_console_allowed(user_id: Any, vps: Dict[str, Any]) -> bool:
+    if is_admin_id(user_id):
+        return True
+    if str(vps.get("user_id")) == str(user_id):
+        return True
+    return str(user_id) in {str(item) for item in (vps.get("shared_with") or [])}
+
+
+def _proxmox_console_actor(interaction: Any, vps: Dict[str, Any]) -> Any:
+    """Get the Discord actor; never infer authorization from a missing user."""
+    user = getattr(interaction, "user", None)
+    actor = getattr(user, "id", None)
+    if actor is None:
+        raise PermissionError("A Discord user is required to open the Proxmox console")
+    return actor
+
+
+def _proxmox_console_node_address(node_id: int) -> str:
+    """Resolve a trusted server-side upstream, never a browser-supplied target."""
+    node = get_node(int(node_id or 1))
+    if node and not node.get("is_local"):
+        endpoint = str(node.get("docker_host") or node.get("url") or "").strip()
+        if endpoint:
+            from urllib.parse import urlsplit
+            parsed = urlsplit(endpoint if "://" in endpoint else "//" + endpoint)
+            if parsed.hostname:
+                return parsed.hostname
+    return PROXMOX_CONSOLE_UPSTREAM_HOST
+
+
+def _proxmox_console_audit(action: str, actor: Any = None, **kwargs: Any) -> None:
+    try:
+        audit(action, actor, **kwargs)
+    except Exception:  # auditing must not prevent a console from opening
+        logger.debug("Proxmox console audit failed for %s", action, exc_info=True)
+
+
+PROXMOX_CONSOLE_SETTINGS = tgd_proxmox_console.ConsoleSettings(
+    host=PROXMOX_CONSOLE_HOST,
+    port=PROXMOX_CONSOLE_PORT,
+    public_host=PROXMOX_CONSOLE_PUBLIC_HOST,
+    url_format=PROXMOX_CONSOLE_URL_FORMAT,
+    upstream_host=PROXMOX_CONSOLE_UPSTREAM_HOST,
+    session_ttl=PROXMOX_CONSOLE_SESSION_TTL,
+    max_sessions=PROXMOX_CONSOLE_MAX_SESSIONS,
+)
+PROXMOX_CONSOLE_BACKEND = (
+    tgd_proxmox_console.ProxmoxConsoleBackend(
+        repo=INFRA.repo,
+        authorize=_proxmox_console_allowed,
+        upstream_host=_proxmox_console_node_address,
+        audit=_proxmox_console_audit,
+        settings=PROXMOX_CONSOLE_SETTINGS,
+    ) if PROXMOX_CONSOLE_ENABLED else None
+)
+
+
+def proxmox_web_console_url(vps: Dict[str, Any], *, user_id: Any = None,
+                            host_port: Optional[int] = None) -> Optional[str]:
+    """Return a gateway link for Proxmox, retaining the old fallback if disabled."""
+    port = host_port or vps.get("ssh_host_port")
+    if PROXMOX_CONSOLE_ENABLED and PROXMOX_CONSOLE_BACKEND is not None:
+        if user_id is None or not str(user_id).strip():
+            raise PermissionError("A Discord user is required to open the Proxmox console")
+        token = PROXMOX_CONSOLE_BACKEND.issue(
+            user_id=user_id, vps=vps, host_port=int(port) if port else None,
+        )
+        return PROXMOX_CONSOLE_BACKEND.url_for(token)
+    return tgd_proxmox.console_url(YOUR_SERVER_IP, int(port)) if port else None
+
+
 
 # Backwards-compatibility shims so older helper names keep working.
 def get_vps_data_snapshot() -> Dict[str, List[Dict[str, Any]]]:
@@ -4765,6 +4850,7 @@ class TgdBot(commands.Bot):
         )
         self.started_at = datetime.now(timezone.utc)
         self._flask_started = False
+        self._proxmox_console_started = False
         self._background_tasks: List[asyncio.Task] = []
         self.ready_event = asyncio.Event()
         self.presence_index = 0
@@ -4839,6 +4925,33 @@ class TgdBot(commands.Bot):
             logger.error("Web terminal could not start: %s", exc, exc_info=True)
             return
         self._flask_started = True
+
+
+    # ── Native Proxmox UI + noVNC gateway ────────────────────────────────────
+    def start_proxmox_console_server(self) -> None:
+        if not PROXMOX_CONSOLE_ENABLED or self._proxmox_console_started:
+            return
+        if PROXMOX_CONSOLE_BACKEND is None:
+            logger.error("Proxmox console backend is not initialized")
+            return
+        try:
+            console_app = tgd_proxmox_console.create_app(PROXMOX_CONSOLE_BACKEND)
+
+            def _serve() -> None:
+                try:
+                    asyncio.run(tgd_proxmox_console.run(
+                        console_app, PROXMOX_CONSOLE_HOST, PROXMOX_CONSOLE_PORT))
+                except Exception as exc:  # pragma: no cover - thread lifecycle
+                    logger.error("Proxmox console server crashed: %s", exc, exc_info=True)
+
+            thread = threading.Thread(
+                target=_serve, daemon=True, name="proxmox-console-server")
+            thread.start()
+        except Exception as exc:
+            self._proxmox_console_started = False
+            logger.error("Proxmox console could not start: %s", exc, exc_info=True)
+            return
+        self._proxmox_console_started = True
 
     # ── background workers ───────────────────────────────────────────────────
     async def _autosave_loop(self) -> None:
@@ -6129,7 +6242,7 @@ class ManageView(PanelView):
                     embed=error_embed("Console Port Missing", "The Proxmox HTTPS port is not recorded; contact an admin."),
                     ephemeral=True)
                 return
-            url = tgd_proxmox.console_url(YOUR_SERVER_IP, int(host_port))
+            url = proxmox_web_console_url(vps, user_id=_proxmox_console_actor(interaction, vps), host_port=int(host_port))
             embed = create_embed(
                 "Proxmox UI & VM Console",
                 f"Use the native Proxmox UI for `{vps['container_name']}`.\n\n"
@@ -6303,7 +6416,7 @@ class ManageView(PanelView):
 
         new_password = result["password"]
         host_port = int(updated.get("ssh_host_port") or vps.get("ssh_host_port") or 0)
-        console_url = (tgd_proxmox.console_url(YOUR_SERVER_IP, host_port)
+        console_url = (proxmox_web_console_url(updated, user_id=_proxmox_console_actor(interaction, vps), host_port=host_port)
                        if host_port else "the published Proxmox HTTPS address")
         audit("vps_reinstall", interaction.user.id, target=container,
               detail=f"proxmox; node={node_id}")
@@ -6693,7 +6806,7 @@ class PasswordView(PanelView):
         if is_proxmox:
             host_port = int(forward["host_port"]) if forward else int(vps.get("ssh_host_port") or 0)
             if host_port:
-                url = tgd_proxmox.console_url(YOUR_SERVER_IP, host_port)
+                url = proxmox_web_console_url(vps, user_id=_proxmox_console_actor(interaction, vps), host_port=host_port)
                 add_field(embed, "🌐 Proxmox Console", f"[Open Proxmox VE]({url})\n`{url}`", False)
         add_field(embed, "⚠️ Security", "Delete this message once you have saved the password.", False)
         try:
@@ -7464,7 +7577,8 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
 
     # ── success: announce + DM credentials ───────────────────────────────────
     ssh_command = None if is_proxmox else ssh_command_for(ssh_port)
-    proxmox_url = result.web_console_url(YOUR_SERVER_IP) if is_proxmox else None
+    proxmox_url = (proxmox_web_console_url(record, user_id=owner.id, host_port=ssh_port)
+                   if is_proxmox else None)
     token = None
     web_pin = (f"{secrets.randbelow(900000) + 100000}"
                if WEBSSH_DEFAULT_PIN and not is_proxmox else None)
@@ -7520,7 +7634,7 @@ async def provision_vps(*, responder: Responder, owner: discord.abc.User, node_i
                                     extra_lines=["**Realm** `Linux PAM standard authentication`"]), False)
         add_field(dm, "🌐 Proxmox Web Console",
                   f"[**→ Open Proxmox VE**]({proxmox_url})\n`{proxmox_url}`\n"
-                  "The first connection uses Proxmox's self-signed HTTPS certificate.\n"
+                  "Proxmox uses a self-signed certificate on its native HTTPS service.\n"
                   "The host is already installed. For a guest OS, upload an ISO, create and start "
                   "a VM, then open its **Console** (noVNC) for the installer and boot menu.", False)
     else:
@@ -11977,6 +12091,7 @@ def main() -> int:
     # WebSSH is an independent HTTP service. Start it before Discord gateway
     # login so a delayed or failed on_ready event cannot leave the port closed.
     bot.start_webssh_server()
+    bot.start_proxmox_console_server()
 
     try:
         bot.run(DISCORD_TOKEN, log_handler=None, reconnect=True)
